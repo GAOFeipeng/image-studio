@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum SessionStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum TurnType {
+  GENERATION
+  EDIT
+}
+
+enum TurnStatus {
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum AssetKind {
+  INPUT
+  OUTPUT
+  MASK
+  REFERENCE
+}
+
+enum AssetSource {
+  UPLOAD
+  GENERATION
+  EDIT
+}
+
+enum UsageAction {
+  GENERATION
+  EDIT
+  UPLOAD
+  LOGIN
+  REGISTER
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  sessions    Session[]
+  turns       Turn[]
+  assets      Asset[]
+  usageEvents UsageEvent[]
+  auditLogs   AuditLog[]   @relation("ActorAuditLogs")
+}
+
+model Session {
+  id            String        @id @default(cuid())
+  title         String
+  description   String?
+  status        SessionStatus @default(ACTIVE)
+  defaultParams Json?
+  ownerId       String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  owner  User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  turns  Turn[]
+  assets Asset[]
+
+  @@index([ownerId, updatedAt])
+}
+
+model Turn {
+  id             String     @id @default(cuid())
+  sessionId      String
+  userId         String
+  type           TurnType
+  status         TurnStatus @default(QUEUED)
+  prompt         String
+  revisedPrompt  String?
+  params         Json
+  inputAssetIds  Json?
+  outputAssetIds Json?
+  maskAssetId    String?
+  parentTurnId   String?
+  retryOfTurnId  String?
+  attempt        Int        @default(1)
+  provider       String
+  providerModel  String
+  requestId      String?
+  errorCode      String?
+  errorMessage   String?
+  errorStatus    Int?
+  latencyMs      Int?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Asset {
+  id               String      @id @default(cuid())
+  ownerId          String
+  sessionId        String?
+  kind             AssetKind
+  source           AssetSource
+  mimeType         String
+  width            Int?
+  height           Int?
+  sizeBytes        Int
+  storageKey       String      @unique
+  originalFilename String?
+  createdByTurnId  String?
+  parentAssetId    String?
+  metadata         Json?
+  createdAt        DateTime    @default(now())
+
+  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, createdAt])
+  @@index([sessionId, createdAt])
+}
+
+model UsageEvent {
+  id         String      @id @default(cuid())
+  userId     String
+  action     UsageAction
+  status     TurnStatus?
+  model      String?
+  turnId     String?
+  latencyMs  Int?
+  assetCount Int?
+  errorCode  String?
+  createdAt  DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  targetType  String?
+  targetId    String?
+  metadata    Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String?
+  encrypted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

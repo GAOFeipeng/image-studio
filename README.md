@@ -1,36 +1,154 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Image Studio
 
-## Getting Started
+Image Studio is a self-hosted image generation and image editing workspace. The UI follows the Open WebUI pattern of a persistent left sidebar, central workspace, shared user/admin frontend, and role-gated admin views, but the product surface is specialized for image assets and multi-turn image workflows.
 
-First, run the development server:
+## Features
+
+- Next.js App Router, TypeScript, Tailwind CSS.
+- Prisma + PostgreSQL for users, sessions, turns, assets, usage events, and audit logs.
+- Server-side OpenAI-compatible image provider adapter with admin-configurable endpoint settings.
+- Local file storage mounted at `/data/uploads`.
+- Login/register, interactive first-admin bootstrap, user/admin role checks.
+- Image generation, image upload, image editing, retry, asset pool, and admin analytics.
+- Docker Compose deployment for Ubuntu public servers.
+
+## Security Notes
+
+Do not put provider keys in `NEXT_PUBLIC_*` variables or frontend code. Provider credentials can be supplied through server-side environment variables or the administrator Provider Settings panel. Saved keys are encrypted at rest and only returned as masked previews.
+
+The key that was pasted into the planning conversation should be rotated before production use.
+
+## Local Development
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create a local env file:
+
+```bash
+cp .env.example .env
+```
+
+3. Start PostgreSQL. The easiest path is Docker Compose:
+
+```bash
+docker compose up -d postgres
+```
+
+4. Keep `DATABASE_URL` pointed at `localhost` for host-based development, then push or migrate the schema:
+
+```bash
+npm run db:push
+```
+
+5. Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+When the database has no users, the login screen switches to first-admin setup. The first registered account receives the `ADMIN` role automatically.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+For provider-free UI testing, set:
 
-## Learn More
+```env
+IMAGE_PROVIDER="mock"
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Ubuntu Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Install Docker Engine and the Docker Compose plugin.
+2. Copy the project to `/opt/image-studio`.
+3. Create `.env.production` from `.env.example`.
+4. Change `DATABASE_URL` to the Compose service hostname:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```env
+DATABASE_URL="postgresql://image_studio:image_studio@postgres:5432/image_studio?schema=public"
+```
 
-## Deploy on Vercel
+5. Replace all secrets:
+   - `JWT_SECRET`
+   - `SETTINGS_ENCRYPTION_KEY`
+   - `IMAGE_API_KEY` if you want environment-based provider configuration
+   - PostgreSQL password if changed in Compose
+6. Start the stack:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+docker compose up -d --build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+7. Confirm health:
+
+```bash
+curl http://127.0.0.1:3000/api/health
+```
+
+For public HTTPS, put Caddy or Nginx in front of the `web` service. The Compose file binds Next.js to `127.0.0.1:3000` so public traffic should enter through the reverse proxy. A starter Caddyfile is in `deploy/Caddyfile`; adjust the domain and DNS before use.
+
+After the first administrator logs in, open the admin area and set Provider Settings. For general OpenAI-compatible deployments, choose `OpenAI-compatible`, enter the provider Base URL, generation/edit paths, default model/size, and API key. Leave `IMAGE_PROVIDER="mock"` only for local UI testing.
+
+## Environment Variables
+
+Important server-only variables:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `SETTINGS_ENCRYPTION_KEY`
+- `SESSION_COOKIE_NAME`
+- `ALLOW_REGISTRATION`
+- `IMAGE_PROVIDER`
+- `IMAGE_API_BASE_URL`
+- `IMAGE_GENERATION_PATH`
+- `IMAGE_EDIT_PATH`
+- `IMAGE_API_KEY`
+- `IMAGE_DEFAULT_MODEL`
+- `IMAGE_DEFAULT_SIZE`
+- `IMAGE_REQUEST_TIMEOUT_MS`
+- `UPLOAD_DIR`
+- `MAX_UPLOAD_MB`
+
+## API Surface
+
+- `POST /api/auth/login`
+- `POST /api/auth/register`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `GET /api/auth/bootstrap`
+- `GET /api/health`
+- `GET /api/provider-settings`
+- `POST /api/sessions`
+- `GET /api/sessions`
+- `GET /api/sessions/:id`
+- `GET /api/sessions/:id/assets`
+- `POST /api/sessions/:id/assets/upload`
+- `GET /api/sessions/:id/turns`
+- `POST /api/sessions/:id/turns/generation`
+- `POST /api/sessions/:id/turns/edit`
+- `POST /api/turns/:id/retry`
+- `GET /api/admin/analytics`
+- `GET /api/admin/tasks`
+- `GET /api/admin/users`
+- `GET /api/admin/audit-logs`
+- `GET /api/admin/provider-settings`
+- `PUT /api/admin/provider-settings`
+
+## Verification
+
+```bash
+npm run lint
+npm run test
+npm run build
+```
+
+## Current MVP Limits
+
+- Image tasks run synchronously inside the request.
+- No brush-based mask editor yet.
+- No S3/MinIO storage adapter yet.
+- No billing or credit system yet.
+- RBAC is role-based with `USER` and `ADMIN`, not custom permissions.
