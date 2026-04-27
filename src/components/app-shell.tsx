@@ -963,8 +963,8 @@ function StudioView(props: {
 
   return (
     <>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
-      <section ref={messagesScrollRef} onScroll={handleMessagesScroll} className="min-h-0 overflow-y-auto px-4 py-5 md:px-7">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_340px]">
+      <section ref={messagesScrollRef} onScroll={handleMessagesScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
         {!hasMessages ? (
           <div className="grid min-h-[50vh] place-items-center text-center">
             <div>
@@ -1004,7 +1004,7 @@ function StudioView(props: {
                   <p className="mb-4 whitespace-pre-wrap text-sm leading-6 text-zinc-200">{turn.prompt}</p>
                   {turn.errorMessage ? <p className="mb-4 text-sm text-red-300">{turn.errorMessage}</p> : null}
                   {outputAssets.length ? (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className={outputAssets.length === 1 ? "flex flex-wrap gap-3" : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
                       {outputAssets.map((asset) => (
                         <ResultImageCard
                           key={asset.id}
@@ -1026,7 +1026,7 @@ function StudioView(props: {
         )}
       </section>
 
-      <aside className="border-t border-zinc-900 bg-[#151515] p-4 lg:border-l lg:border-t-0">
+      <aside className="max-h-[52vh] shrink-0 overflow-y-auto border-t border-zinc-900 bg-[#151515] p-4 lg:max-h-none lg:min-h-0 lg:border-l lg:border-t-0">
         {providerWarning ? (
           <div className="mb-4 rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-100">
             {providerWarning}
@@ -1053,36 +1053,21 @@ function StudioView(props: {
               <span className="text-xs text-zinc-500">尺寸预设</span>
               <span className="truncate text-[11px] text-zinc-500">API size: {props.size}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {sizePresets.map((preset) => {
-                const selected = props.size === preset.size;
-
-                return (
-                  <button
-                    key={preset.size}
-                    type="button"
-                    onClick={() => props.setSize(preset.size)}
-                    className={`min-h-[92px] rounded-md border p-3 text-left transition ${
-                      selected
-                        ? "border-sky-400 bg-sky-950/30 text-white"
-                        : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-600"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold">{preset.ratio}</span>
-                      <span className="shrink-0 text-[10px] text-zinc-500">{preset.size}</span>
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-300">{preset.label}</div>
-                    <div className="mt-1 text-[11px] leading-4 text-zinc-500">{preset.useCase}</div>
-                  </button>
-                );
-              })}
+            <select
+              value={props.size}
+              onChange={(event) => props.setSize(event.target.value)}
+              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+            >
+              {sizePresets.map((preset) => (
+                <option key={preset.size} value={preset.size}>
+                  {preset.ratio} · {preset.label} · {preset.size}
+                </option>
+              ))}
+              {!selectedSizePreset ? <option value={props.size}>自定义 · {props.size}</option> : null}
+            </select>
+            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs leading-5 text-zinc-400">
+              {selectedSizePreset ? selectedSizePreset.useCase : `当前使用自定义 provider size：${props.size}`}
             </div>
-            {!selectedSizePreset ? (
-              <div className="mt-2 rounded-md border border-amber-700/60 bg-amber-950/20 px-3 py-2 text-xs leading-5 text-amber-100">
-                当前使用自定义 provider size：{props.size}
-              </div>
-            ) : null}
           </div>
           <Field label="质量">
             <select
@@ -1239,16 +1224,16 @@ function ResultImageCard(props: {
   const label = props.asset.originalFilename ?? props.asset.kind;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+    <div className="w-fit max-w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
       <button
         type="button"
         onClick={() => props.onPreview(props.asset)}
-        className="group relative flex aspect-square w-full items-center justify-center bg-black/30 p-2 text-left"
+        className="group relative flex max-w-full items-center justify-center bg-zinc-950 text-left"
         aria-label="Preview result image"
         title="Preview image"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={props.asset.url} alt={label} className="h-full w-full object-contain" />
+        <img src={props.asset.url} alt={label} className="block max-h-[min(64vh,760px)] max-w-full object-contain" />
         <span className="pointer-events-none absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-md bg-black/70 text-zinc-100 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
           <Maximize2 size={16} />
         </span>
