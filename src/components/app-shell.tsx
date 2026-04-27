@@ -10,12 +10,14 @@ import {
   Layers,
   Loader2,
   LogOut,
+  Maximize2,
   Plus,
   RefreshCw,
   Search,
   Settings2,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -69,6 +71,15 @@ type Turn = {
   latencyMs?: number | null;
   outputAssetIds: string[];
   createdAt: string;
+};
+
+type PendingTurn = {
+  id: string;
+  sessionId: string;
+  type: Turn["type"];
+  prompt: string;
+  providerModel: string;
+  startedAt: number;
 };
 
 type Analytics = {
@@ -175,7 +186,22 @@ class ApiRequestError extends Error {
 }
 
 const defaultModel = "gpt-image-2";
-const sizes = ["1024x1024", "1024x1536", "1536x1024"];
+type SizePreset = {
+  ratio: string;
+  label: string;
+  size: string;
+  useCase: string;
+};
+
+const sizePresets: SizePreset[] = [
+  { ratio: "1:1", label: "Square", size: "1024x1024", useCase: "头像、商品图、社媒方图" },
+  { ratio: "9:16", label: "Vertical", size: "1152x2048", useCase: "短视频、故事、手机壁纸" },
+  { ratio: "16:9", label: "Widescreen", size: "2048x1152", useCase: "横幅、封面、演示大图" },
+  { ratio: "4:3", label: "Landscape", size: "1536x1152", useCase: "文章配图、演示页、场景图" },
+  { ratio: "3:4", label: "Portrait", size: "1152x1536", useCase: "人物海报、商品详情、竖版构图" },
+  { ratio: "2:3", label: "Tall", size: "1024x1536", useCase: "海报、人物、竖版插画" },
+  { ratio: "3:2", label: "Wide", size: "1536x1024", useCase: "封面、产品场景、宽幅构图" },
+];
 const acceptedUploadTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const maxEditInputs = 4;
 
@@ -191,10 +217,9 @@ export function AppShell() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [view, setView] = useState<"studio" | "assets" | "admin">("studio");
-  const [mode, setMode] = useState<"generation" | "edit">("generation");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(defaultModel);
-  const [size, setSize] = useState(sizes[0]);
+  const [size, setSize] = useState(sizePresets[0].size);
   const [quality, setQuality] = useState<"auto" | "low" | "medium" | "high">("auto");
   const [count, setCount] = useState(1);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
@@ -207,9 +232,11 @@ export function AppShell() {
   }>({ tasks: [], users: [], auditLogs: [] });
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [uploadPreviews, setUploadPreviews] = useState<UploadPreview[]>([]);
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedSessionIdRef = useRef<string | null>(null);
   const uploadPreviewUrls = useRef<string[]>([]);
 
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
@@ -239,6 +266,10 @@ export function AppShell() {
   }, [selectedSessionId]);
 
   useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
     function pasteImages(event: ClipboardEvent) {
       const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
       if (files.length === 0) return;
@@ -249,7 +280,7 @@ export function AppShell() {
     window.addEventListener("paste", pasteImages);
     return () => window.removeEventListener("paste", pasteImages);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSessionId, mode]);
+  }, [selectedSessionId]);
 
   useEffect(() => {
     uploadPreviewUrls.current = uploadPreviews.map((preview) => preview.previewUrl);
@@ -324,6 +355,11 @@ export function AppShell() {
       request<{ assets: Asset[] }>(`/api/sessions/${sessionId}/assets`),
       request<{ turns: Turn[] }>(`/api/sessions/${sessionId}/turns`),
     ]);
+
+    if (selectedSessionIdRef.current !== sessionId) {
+      return;
+    }
+
     setAssets(assetData.assets);
     setTurns(turnData.turns);
   }
@@ -400,6 +436,8 @@ export function AppShell() {
     setSelectedSessionId(null);
     setAssets([]);
     setTurns([]);
+    setSelectedAssetIds([]);
+    setPendingTurn(null);
   }
 
   async function createNewSession() {
@@ -410,6 +448,7 @@ export function AppShell() {
     });
     setSessions((current) => [data.session, ...current]);
     setSelectedSessionId(data.session.id);
+    setSelectedAssetIds([]);
     setView("studio");
   }
 
@@ -420,7 +459,7 @@ export function AppShell() {
     const imageFiles = selectedFiles.filter((file) => acceptedUploadTypes.has(file.type));
     const rejectedCount = selectedFiles.length - imageFiles.length;
     if (rejectedCount > 0) {
-      setMessage("Only PNG, JPEG, and WebP images can be uploaded.");
+      setMessage("仅支持 PNG、JPEG 和 WebP 图片。");
     }
     if (imageFiles.length === 0) return;
 
@@ -443,21 +482,19 @@ export function AppShell() {
         );
         const form = new FormData();
         form.set("file", file);
-        form.set("kind", mode === "edit" ? "INPUT" : "REFERENCE");
+        form.set("kind", "INPUT");
         try {
           const data = await request<{ asset: Asset }>(`/api/sessions/${selectedSessionId}/assets/upload`, {
             method: "POST",
             body: form,
           });
           setAssets((current) => [data.asset, ...current]);
-          if (mode === "edit") {
-            setSelectedAssetIds((current) => Array.from(new Set([...current, data.asset.id])).slice(0, maxEditInputs));
-          }
+          setSelectedAssetIds((current) => Array.from(new Set([data.asset.id, ...current])).slice(0, maxEditInputs));
           setUploadPreviews((current) =>
             current.map((preview) => (preview.id === previewId ? { ...preview, status: "done" } : preview)),
           );
         } catch (error) {
-          const uploadError = error instanceof Error ? error.message : "Upload failed";
+          const uploadError = error instanceof Error ? error.message : "上传失败";
           setUploadPreviews((current) =>
             current.map((preview) =>
               preview.id === previewId ? { ...preview, status: "error", error: uploadError } : preview,
@@ -473,38 +510,55 @@ export function AppShell() {
   }
 
   async function submitTurn() {
-    if (!selectedSessionId || !prompt.trim()) return;
+    const sessionId = selectedSessionId;
+    const promptText = prompt;
+    if (!sessionId || !promptText.trim()) return;
     if (providerSettings?.provider !== "openai-compatible" || !providerSettings.hasApiKey) {
       setMessage("请先在管理员端配置真实 OpenAI-compatible Provider 和 API key。");
       return;
     }
 
+    const inputAssetIds = selectedAssetIds.slice(0, maxEditInputs);
+    const hasInputImages = inputAssetIds.length > 0;
+    const pending: PendingTurn = {
+      id: `pending-${crypto.randomUUID()}`,
+      sessionId,
+      type: hasInputImages ? "EDIT" : "GENERATION",
+      prompt: promptText,
+      providerModel: model,
+      startedAt: Date.now(),
+    };
+
+    setPendingTurn(pending);
     setBusy(true);
     setMessage(null);
 
     try {
       const endpoint =
-        mode === "generation"
-          ? `/api/sessions/${selectedSessionId}/turns/generation`
-          : `/api/sessions/${selectedSessionId}/turns/edit`;
+        hasInputImages
+          ? `/api/sessions/${sessionId}/turns/edit`
+          : `/api/sessions/${sessionId}/turns/generation`;
       const body =
-        mode === "generation"
-          ? { prompt, params: { model, size, quality, n: count } }
-          : { prompt, params: { model, size, quality, n: count }, inputAssetIds: selectedAssetIds };
+        hasInputImages
+          ? { prompt: promptText, params: { model, size, quality, n: count }, inputAssetIds }
+          : { prompt: promptText, params: { model, size, quality, n: count } };
 
       const data = await request<{ turn: Turn; assets: Asset[] }>(endpoint, {
         method: "POST",
         body: JSON.stringify(body),
       });
-      setTurns((current) => [...current, data.turn]);
-      setAssets((current) => [...data.assets, ...current]);
-      setPrompt("");
+      if (selectedSessionIdRef.current === sessionId) {
+        setTurns((current) => [...current, data.turn]);
+        setAssets((current) => [...data.assets, ...current]);
+      }
+      setPrompt((current) => (current === promptText ? "" : current));
       await refreshSessions();
       if (user?.role === "ADMIN") await refreshAdmin();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Image task failed");
-      if (selectedSessionId) await refreshSessionData(selectedSessionId);
+      if (selectedSessionIdRef.current === sessionId) await refreshSessionData(sessionId);
     } finally {
+      setPendingTurn((current) => (current?.id === pending.id ? null : current));
       setBusy(false);
     }
   }
@@ -528,7 +582,6 @@ export function AppShell() {
 
   function continueEditing(asset: Asset) {
     setView("studio");
-    setMode("edit");
     setSelectedAssetIds([asset.id]);
     setPrompt("");
   }
@@ -557,7 +610,7 @@ export function AppShell() {
                 {requiresBootstrap ? "创建首个管理员" : "Image Studio"}
               </h1>
               <p className="text-sm text-zinc-400">
-                {requiresBootstrap ? "当前没有用户，请先注册管理员账号。" : "图像生成与多轮编辑工作台"}
+                {requiresBootstrap ? "当前没有用户，请先注册管理员账号。" : "图像创作与多轮工作台"}
               </p>
             </div>
           </div>
@@ -643,6 +696,7 @@ export function AppShell() {
             <button
               key={session.id}
               onClick={() => {
+                if (session.id !== selectedSessionId) setSelectedAssetIds([]);
                 setSelectedSessionId(session.id);
                 setView("studio");
               }}
@@ -686,7 +740,7 @@ export function AppShell() {
               {view === "studio" ? <span className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400">{model}</span> : null}
             </div>
             <div className="mt-1 text-xs text-zinc-500">
-              {view === "studio" ? "多轮生成、编辑和资产复用" : view === "assets" ? "上传、生成和编辑结果集中管理" : "使用情况、任务健康和审计"}
+              {view === "studio" ? "提示词、输入图和资产复用" : view === "assets" ? "上传图和创作结果集中管理" : "使用情况、任务健康和审计"}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -723,9 +777,8 @@ export function AppShell() {
           <StudioView
             assets={assets}
             turns={turns}
+            pendingTurn={pendingTurn?.sessionId === selectedSessionId ? pendingTurn : null}
             assetById={assetById}
-            mode={mode}
-            setMode={setMode}
             prompt={prompt}
             setPrompt={setPrompt}
             model={model}
@@ -750,7 +803,12 @@ export function AppShell() {
         ) : null}
 
         {view === "assets" ? (
-          <AssetPool assets={assets} selectedAssetIds={selectedAssetIds} setSelectedAssetIds={setSelectedAssetIds} continueEditing={continueEditing} />
+          <AssetPool
+            assets={assets}
+            selectedAssetIds={selectedAssetIds}
+            setSelectedAssetIds={setSelectedAssetIds}
+            continueEditing={continueEditing}
+          />
         ) : null}
 
         {view === "admin" && user.role === "ADMIN" ? (
@@ -825,9 +883,8 @@ function SidebarButton(props: { active: boolean; icon: React.ReactNode; label: s
 function StudioView(props: {
   assets: Asset[];
   turns: Turn[];
+  pendingTurn: PendingTurn | null;
   assetById: Map<string, Asset>;
-  mode: "generation" | "edit";
-  setMode: (mode: "generation" | "edit") => void;
   prompt: string;
   setPrompt: (value: string) => void;
   model: string;
@@ -850,14 +907,51 @@ function StudioView(props: {
   busy: boolean;
 }) {
   const [dragActive, setDragActive] = useState(false);
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+  const [timerNow, setTimerNow] = useState(() => Date.now());
+  const messagesScrollRef = useRef<HTMLElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const providerReady = props.providerSettings?.provider === "openai-compatible" && props.providerSettings.hasApiKey;
   const providerWarning = !props.providerSettings
-    ? "正在读取图像供应商配置。"
+        ? "正在读取图像供应商配置。"
     : props.providerSettings.provider === "mock"
       ? "当前是开发 mock provider，不会调用真实文生图接口。请在管理员端切换到 OpenAI-compatible。"
       : !props.providerSettings.hasApiKey
-        ? "OpenAI-compatible provider 尚未配置 API key。请在管理员端填写后再生成。"
+        ? "OpenAI-compatible provider 尚未配置 API key。请在管理员端填写后再创作。"
         : null;
+  const hasMessages = props.turns.length > 0 || Boolean(props.pendingTurn);
+  const pendingTurnId = props.pendingTurn?.id ?? null;
+  const pendingStartedAt = props.pendingTurn?.startedAt ?? null;
+  const selectedSizePreset = sizePresets.find((preset) => preset.size === props.size);
+  const turnVersion = useMemo(
+    () =>
+      props.turns
+        .map((turn) => `${turn.id}:${turn.status}:${turn.outputAssetIds.length}:${turn.latencyMs ?? ""}`)
+        .join("|"),
+    [props.turns],
+  );
+
+  useEffect(() => {
+    if (!pendingStartedAt) return;
+
+    const intervalId = window.setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [pendingStartedAt]);
+
+  useEffect(() => {
+    if (!hasMessages) return;
+    if (!pendingTurnId && !shouldAutoScrollRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [hasMessages, pendingTurnId, turnVersion]);
+
+  function handleMessagesScroll() {
+    const element = messagesScrollRef.current;
+    if (!element) return;
+
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom < 180;
+  }
 
   function toggleInputAsset(assetId: string) {
     props.setSelectedAssetIds((current) => {
@@ -868,16 +962,17 @@ function StudioView(props: {
   }
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
-      <section className="min-h-0 overflow-y-auto px-4 py-5 md:px-7">
-        {props.turns.length === 0 ? (
+    <>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
+      <section ref={messagesScrollRef} onScroll={handleMessagesScroll} className="min-h-0 overflow-y-auto px-4 py-5 md:px-7">
+        {!hasMessages ? (
           <div className="grid min-h-[50vh] place-items-center text-center">
             <div>
               <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-white text-black">
                 <ImageIcon size={26} />
               </div>
               <h2 className="text-3xl font-semibold">gpt-image-2</h2>
-              <p className="mt-2 text-zinc-500">从一个提示词或参考图开始。</p>
+              <p className="mt-2 text-zinc-500">输入提示词，或先添加图片。</p>
             </div>
           </div>
         ) : (
@@ -891,7 +986,9 @@ function StudioView(props: {
                 <article key={turn.id} className="rounded-lg border border-zinc-800 bg-[#181818] p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">{turn.type}</span>
+                      <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">
+                        {turn.type === "EDIT" ? "含输入图" : "纯文本"}
+                      </span>
                       <span className={statusClass(turn.status)}>{turn.status}</span>
                       <span className="text-xs text-zinc-500">{turn.providerModel}</span>
                     </div>
@@ -909,13 +1006,22 @@ function StudioView(props: {
                   {outputAssets.length ? (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {outputAssets.map((asset) => (
-                        <ImageCard key={asset.id} asset={asset} continueEditing={props.continueEditing} selectable={false} />
+                        <ResultImageCard
+                          key={asset.id}
+                          asset={asset}
+                          continueEditing={props.continueEditing}
+                          onPreview={setPreviewAsset}
+                        />
                       ))}
                     </div>
                   ) : null}
                 </article>
               );
             })}
+            {props.pendingTurn ? (
+              <PendingTurnCard turn={props.pendingTurn} elapsedMs={Math.max(0, timerNow - props.pendingTurn.startedAt)} />
+            ) : null}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </section>
@@ -926,21 +1032,6 @@ function StudioView(props: {
             {providerWarning}
           </div>
         ) : null}
-
-        <div className="mb-4 grid grid-cols-2 rounded-md bg-zinc-900 p-1 text-sm">
-          <button
-            onClick={() => props.setMode("generation")}
-            className={`rounded px-3 py-2 ${props.mode === "generation" ? "bg-zinc-700 text-white" : "text-zinc-400"}`}
-          >
-            生成
-          </button>
-          <button
-            onClick={() => props.setMode("edit")}
-            className={`rounded px-3 py-2 ${props.mode === "edit" ? "bg-zinc-700 text-white" : "text-zinc-400"}`}
-          >
-            编辑
-          </button>
-        </div>
 
         <textarea
           value={props.prompt}
@@ -957,17 +1048,42 @@ function StudioView(props: {
               className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
             />
           </Field>
-          <Field label="尺寸">
-            <select
-              value={props.size}
-              onChange={(event) => props.setSize(event.target.value)}
-              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-            >
-              {sizes.map((item) => (
-                <option key={item}>{item}</option>
-              ))}
-            </select>
-          </Field>
+          <div className="col-span-2">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs text-zinc-500">尺寸预设</span>
+              <span className="truncate text-[11px] text-zinc-500">API size: {props.size}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {sizePresets.map((preset) => {
+                const selected = props.size === preset.size;
+
+                return (
+                  <button
+                    key={preset.size}
+                    type="button"
+                    onClick={() => props.setSize(preset.size)}
+                    className={`min-h-[92px] rounded-md border p-3 text-left transition ${
+                      selected
+                        ? "border-sky-400 bg-sky-950/30 text-white"
+                        : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-600"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold">{preset.ratio}</span>
+                      <span className="shrink-0 text-[10px] text-zinc-500">{preset.size}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-300">{preset.label}</div>
+                    <div className="mt-1 text-[11px] leading-4 text-zinc-500">{preset.useCase}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {!selectedSizePreset ? (
+              <div className="mt-2 rounded-md border border-amber-700/60 bg-amber-950/20 px-3 py-2 text-xs leading-5 text-amber-100">
+                当前使用自定义 provider size：{props.size}
+              </div>
+            ) : null}
+          </div>
           <Field label="质量">
             <select
               value={props.quality}
@@ -985,18 +1101,18 @@ function StudioView(props: {
               min={1}
               max={4}
               value={props.count}
-              onChange={(event) => props.setCount(Number(event.target.value))}
+              onChange={(event) => props.setCount(clampImageCount(event.target.value))}
               className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
             />
           </Field>
         </div>
 
-        {props.mode === "edit" ? (
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between text-sm">
-              <span className="text-zinc-300">输入图片</span>
-              <span className="text-xs text-zinc-500">{props.selectedAssetIds.length} 已选</span>
-            </div>
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between text-sm">
+            <span className="text-zinc-300">输入图片</span>
+            <span className="text-xs text-zinc-500">{props.selectedAssetIds.length} 已选</span>
+          </div>
+          {props.assets.length ? (
             <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto">
               {props.assets.map((asset) => (
                 <button
@@ -1007,7 +1123,7 @@ function StudioView(props: {
                   }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={asset.url} alt="" className="aspect-square w-full object-cover" />
+                  <img src={asset.url} alt="" className="aspect-square w-full bg-black/30 object-contain" />
                   <div className="space-y-0.5 px-1.5 py-1">
                     <div className="truncate text-[11px] text-zinc-300">{asset.originalFilename ?? asset.kind}</div>
                     <div className="text-[10px] text-zinc-500">{formatBytes(asset.sizeBytes)}</div>
@@ -1015,8 +1131,8 @@ function StudioView(props: {
                 </button>
               ))}
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
 
         <div
           onClick={props.openUploadPicker}
@@ -1045,8 +1161,8 @@ function StudioView(props: {
               <Upload size={18} />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-zinc-100">Upload images</div>
-              <div className="truncate text-xs text-zinc-500">Click, drop, or paste PNG, JPEG, WebP.</div>
+              <div className="text-sm font-medium text-zinc-100">添加图片</div>
+              <div className="truncate text-xs text-zinc-500">点击、拖放或粘贴 PNG、JPEG、WebP。</div>
             </div>
           </div>
 
@@ -1071,17 +1187,143 @@ function StudioView(props: {
             disabled={
               props.busy ||
               !providerReady ||
-              !props.prompt.trim() ||
-              (props.mode === "edit" && props.selectedAssetIds.length === 0)
+              !props.prompt.trim()
             }
             onClick={props.submitTurn}
             className="flex h-11 flex-1 items-center justify-center gap-2 rounded-md bg-white px-4 text-sm font-medium text-black disabled:opacity-50"
           >
             {props.busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-            {providerReady ? (props.mode === "generation" ? "生成图片" : "编辑图片") : "先配置真实 Provider"}
+            {providerReady ? "开始创作" : "先配置真实 Provider"}
           </button>
         </div>
       </aside>
+      </div>
+      {previewAsset ? <ImagePreviewOverlay asset={previewAsset} onClose={() => setPreviewAsset(null)} /> : null}
+    </>
+  );
+}
+
+function PendingTurnCard(props: { turn: PendingTurn; elapsedMs: number }) {
+  const modeLabel = props.turn.type === "EDIT" ? "含输入图" : "纯文本";
+
+  return (
+    <article
+      className="rounded-lg border border-sky-900/70 bg-[#181818] p-4 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]"
+      aria-live="polite"
+    >
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">{modeLabel}</span>
+          <span className="inline-flex items-center gap-1.5 rounded-md bg-sky-950 px-2 py-1 text-xs text-sky-300">
+            <Loader2 className="animate-spin" size={13} />
+            创作中
+          </span>
+          <span className="text-xs text-zinc-500">{props.turn.providerModel}</span>
+        </div>
+        <div className="text-xs text-zinc-400">已耗时 {formatDuration(props.elapsedMs)}</div>
+      </div>
+      <p className="mb-4 whitespace-pre-wrap text-sm leading-6 text-zinc-200">{props.turn.prompt}</p>
+      <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-400">
+        <Loader2 className="shrink-0 animate-spin text-sky-300" size={16} />
+        <span>创作中，结果完成后会显示在这里。</span>
+      </div>
+    </article>
+  );
+}
+
+function ResultImageCard(props: {
+  asset: Asset;
+  continueEditing: (asset: Asset) => void;
+  onPreview: (asset: Asset) => void;
+}) {
+  const label = props.asset.originalFilename ?? props.asset.kind;
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+      <button
+        type="button"
+        onClick={() => props.onPreview(props.asset)}
+        className="group relative flex aspect-square w-full items-center justify-center bg-black/30 p-2 text-left"
+        aria-label="Preview result image"
+        title="Preview image"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={props.asset.url} alt={label} className="h-full w-full object-contain" />
+        <span className="pointer-events-none absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-md bg-black/70 text-zinc-100 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+          <Maximize2 size={16} />
+        </span>
+      </button>
+      <div className="flex items-center justify-between gap-2 p-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-zinc-200">{props.asset.kind}</div>
+          <div className="text-xs text-zinc-500">{formatBytes(props.asset.sizeBytes)}</div>
+        </div>
+        <div className="flex items-center gap-1">
+          <a
+            href={props.asset.url}
+            download
+            className="grid h-8 w-8 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
+            title="Download"
+          >
+            <Download size={16} />
+          </a>
+          <button
+            type="button"
+            onClick={() => props.continueEditing(props.asset)}
+            className="grid h-8 w-8 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
+            title="作为输入图继续创作"
+          >
+            <Edit3 size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImagePreviewOverlay(props: { asset: Asset; onClose: () => void }) {
+  const label = props.asset.originalFilename ?? props.asset.kind;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={props.onClose}
+    >
+      <div className="absolute right-4 top-4 z-10 flex gap-2">
+        <a
+          href={props.asset.url}
+          download
+          onClick={(event) => event.stopPropagation()}
+          className="grid h-10 w-10 place-items-center rounded-md border border-white/15 bg-black/60 text-zinc-100 hover:bg-zinc-900"
+          title="Download"
+        >
+          <Download size={18} />
+        </a>
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="grid h-10 w-10 place-items-center rounded-md border border-white/15 bg-black/60 text-zinc-100 hover:bg-zinc-900"
+          aria-label="Close image preview"
+          title="Close"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={props.onClose}
+        className="flex max-h-full max-w-full cursor-zoom-out items-center justify-center"
+        aria-label="Close image preview"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={props.asset.url}
+          alt={label}
+          className="max-h-[calc(100vh-5rem)] max-w-[calc(100vw-2rem)] rounded-md object-contain shadow-2xl"
+        />
+      </button>
     </div>
   );
 }
@@ -1090,7 +1332,7 @@ function UploadPreviewRow({ preview }: { preview: UploadPreview }) {
   return (
     <div className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 p-2">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={preview.previewUrl} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
+      <img src={preview.previewUrl} alt="" className="h-12 w-12 shrink-0 rounded bg-black/30 object-contain" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium text-zinc-200">{preview.name}</div>
         <div className="mt-0.5 text-[11px] text-zinc-500">{formatBytes(preview.size)}</div>
@@ -1124,29 +1366,39 @@ function AssetPool(props: {
   setSelectedAssetIds: React.Dispatch<React.SetStateAction<string[]>>;
   continueEditing: (asset: Asset) => void;
 }) {
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
-      <div className="mb-5 flex max-w-5xl items-center gap-3 rounded-lg border border-zinc-800 bg-[#181818] px-3 py-2">
-        <Search size={18} className="text-zinc-500" />
-        <span className="text-sm text-zinc-500">资产池展示当前会话的全部上传图、生成图和编辑结果。</span>
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {props.assets.map((asset) => (
-          <ImageCard
-            key={asset.id}
-            asset={asset}
-            continueEditing={props.continueEditing}
-            selectable
-            selected={props.selectedAssetIds.includes(asset.id)}
-            onSelect={() =>
-              props.setSelectedAssetIds((current) =>
-                current.includes(asset.id) ? current.filter((id) => id !== asset.id) : [...current, asset.id],
-              )
-            }
-          />
-        ))}
-      </div>
-    </section>
+    <>
+      <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
+        <div className="mb-5 flex max-w-5xl items-center gap-3 rounded-lg border border-zinc-800 bg-[#181818] px-3 py-2">
+          <Search size={18} className="text-zinc-500" />
+          <span className="text-sm text-zinc-500">资产池展示当前会话的全部上传图和创作结果。</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {props.assets.map((asset) => (
+            <ImageCard
+              key={asset.id}
+              asset={asset}
+              continueEditing={props.continueEditing}
+              selectable
+              selected={props.selectedAssetIds.includes(asset.id)}
+              onPreview={setPreviewAsset}
+              onSelect={() =>
+                props.setSelectedAssetIds((current) =>
+                  current.includes(asset.id)
+                    ? current.filter((id) => id !== asset.id)
+                    : current.length >= maxEditInputs
+                      ? current
+                      : [...current, asset.id],
+                )
+              }
+            />
+          ))}
+        </div>
+      </section>
+      {previewAsset ? <ImagePreviewOverlay asset={previewAsset} onClose={() => setPreviewAsset(null)} /> : null}
+    </>
   );
 }
 
@@ -1155,13 +1407,21 @@ function ImageCard(props: {
   continueEditing: (asset: Asset) => void;
   selectable: boolean;
   selected?: boolean;
+  onPreview?: (asset: Asset) => void;
   onSelect?: () => void;
 }) {
   return (
     <div className={`overflow-hidden rounded-lg border bg-zinc-950 ${props.selected ? "border-sky-400" : "border-zinc-800"}`}>
-      <button onClick={props.onSelect} className="block w-full cursor-pointer text-left" disabled={!props.selectable}>
+      <button
+        type="button"
+        onClick={() => props.onPreview?.(props.asset)}
+        className="group relative flex aspect-square w-full cursor-zoom-in items-center justify-center bg-black/30 p-2 text-left"
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={props.asset.url} alt="" className="aspect-square w-full object-cover" />
+        <img src={props.asset.url} alt="" className="h-full w-full object-contain" />
+        <span className="pointer-events-none absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-md bg-black/70 text-zinc-100 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+          <Maximize2 size={16} />
+        </span>
       </button>
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="min-w-0">
@@ -1169,6 +1429,18 @@ function ImageCard(props: {
           <div className="text-xs text-zinc-500">{formatBytes(props.asset.sizeBytes)}</div>
         </div>
         <div className="flex items-center gap-1">
+          {props.selectable ? (
+            <button
+              type="button"
+              onClick={props.onSelect}
+              className={`grid h-8 w-8 place-items-center rounded-md ${
+                props.selected ? "bg-sky-500 text-white" : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+              title={props.selected ? "取消输入图" : "作为输入图"}
+            >
+              <CheckCircle2 size={16} />
+            </button>
+          ) : null}
           <a
             href={props.asset.url}
             download
@@ -1180,7 +1452,7 @@ function ImageCard(props: {
           <button
             onClick={() => props.continueEditing(props.asset)}
             className="grid h-8 w-8 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
-            title="继续编辑"
+            title="作为输入图继续创作"
           >
             <Edit3 size={16} />
           </button>
@@ -1494,4 +1766,10 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function clampImageCount(value: string) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return 1;
+  return Math.min(4, Math.max(1, Math.trunc(next)));
 }
