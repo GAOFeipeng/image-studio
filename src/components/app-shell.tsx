@@ -751,9 +751,6 @@ export function AppShell() {
             >
               <RefreshCw size={17} />
             </button>
-            <button className="grid h-9 w-9 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800" title="设置">
-              <Settings2 size={17} />
-            </button>
           </div>
         </header>
 
@@ -907,6 +904,7 @@ function StudioView(props: {
   busy: boolean;
 }) {
   const [dragActive, setDragActive] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const [timerNow, setTimerNow] = useState(() => Date.now());
   const messagesScrollRef = useRef<HTMLElement>(null);
@@ -924,6 +922,11 @@ function StudioView(props: {
   const pendingTurnId = props.pendingTurn?.id ?? null;
   const pendingStartedAt = props.pendingTurn?.startedAt ?? null;
   const selectedSizePreset = sizePresets.find((preset) => preset.size === props.size);
+  const selectedAssets = props.selectedAssetIds
+    .map((id) => props.assetById.get(id))
+    .filter((asset): asset is Asset => Boolean(asset));
+  const sizePillRatio = selectedSizePreset?.ratio ?? "Size";
+  const sizePillDetail = selectedSizePreset?.size ?? props.size;
   const turnVersion = useMemo(
     () =>
       props.turns
@@ -963,225 +966,305 @@ function StudioView(props: {
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_340px]">
-      <section ref={messagesScrollRef} onScroll={handleMessagesScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
-        {!hasMessages ? (
-          <div className="grid min-h-[50vh] place-items-center text-center">
-            <div>
-              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-white text-black">
-                <ImageIcon size={26} />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <section
+          ref={messagesScrollRef}
+          onScroll={handleMessagesScroll}
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7"
+        >
+          {!hasMessages ? (
+            <div className="grid min-h-[50vh] place-items-center text-center">
+              <div>
+                <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-white text-black">
+                  <ImageIcon size={26} />
+                </div>
+                <h2 className="text-3xl font-semibold">gpt-image-2</h2>
+                <p className="mt-2 text-zinc-500">输入提示词，或先添加图片。</p>
               </div>
-              <h2 className="text-3xl font-semibold">gpt-image-2</h2>
-              <p className="mt-2 text-zinc-500">输入提示词，或先添加图片。</p>
             </div>
-          </div>
-        ) : (
-          <div className="mx-auto max-w-5xl space-y-5">
-            {props.turns.map((turn) => {
-              const outputAssets = turn.outputAssetIds
-                .map((id) => props.assetById.get(id))
-                .filter((asset): asset is Asset => Boolean(asset));
+          ) : (
+            <div className="mx-auto max-w-5xl space-y-5">
+              {props.turns.map((turn) => {
+                const outputAssets = turn.outputAssetIds
+                  .map((id) => props.assetById.get(id))
+                  .filter((asset): asset is Asset => Boolean(asset));
 
-              return (
-                <article key={turn.id} className="rounded-lg border border-zinc-800 bg-[#181818] p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">
-                        {turn.type === "EDIT" ? "含输入图" : "纯文本"}
-                      </span>
-                      <span className={statusClass(turn.status)}>{turn.status}</span>
-                      <span className="text-xs text-zinc-500">{turn.providerModel}</span>
+                return (
+                  <article key={turn.id} className="rounded-lg border border-zinc-800 bg-[#181818] p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">
+                          {turn.type === "EDIT" ? "含输入图" : "纯文本"}
+                        </span>
+                        <span className={statusClass(turn.status)}>{turn.status}</span>
+                        <span className="text-xs text-zinc-500">{turn.providerModel}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-zinc-500">
+                        {turn.latencyMs ? `${Math.round(turn.latencyMs / 1000)}s` : null}
+                        {turn.status === "FAILED" ? (
+                          <button
+                            onClick={() => props.retryTurn(turn.id)}
+                            className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
+                          >
+                            重试
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-zinc-500">
-                      {turn.latencyMs ? `${Math.round(turn.latencyMs / 1000)}s` : null}
-                      {turn.status === "FAILED" ? (
-                        <button onClick={() => props.retryTurn(turn.id)} className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800">
-                          重试
-                        </button>
-                      ) : null}
+                    <p className="mb-4 whitespace-pre-wrap text-sm leading-6 text-zinc-200">{turn.prompt}</p>
+                    {turn.errorMessage ? <p className="mb-4 text-sm text-red-300">{turn.errorMessage}</p> : null}
+                    {outputAssets.length ? (
+                      <div className={outputAssets.length === 1 ? "flex flex-wrap gap-3" : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
+                        {outputAssets.map((asset) => (
+                          <ResultImageCard
+                            key={asset.id}
+                            asset={asset}
+                            continueEditing={props.continueEditing}
+                            onPreview={setPreviewAsset}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+              {props.pendingTurn ? (
+                <PendingTurnCard turn={props.pendingTurn} elapsedMs={Math.max(0, timerNow - props.pendingTurn.startedAt)} />
+              ) : null}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </section>
+
+        <aside className="shrink-0 border-t border-zinc-900 bg-[#151515]/95 px-3 py-3 backdrop-blur md:px-7">
+          <div className="mx-auto flex max-w-5xl flex-col">
+            {providerWarning ? (
+              <div className="mb-3 rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-100">
+                {providerWarning}
+              </div>
+            ) : null}
+
+            <div
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                void props.uploadFiles(event.dataTransfer.files);
+              }}
+              className={`order-2 rounded-lg border bg-zinc-950 transition ${
+                dragActive ? "border-sky-400 ring-2 ring-sky-500/20" : "border-zinc-700"
+              }`}
+            >
+              {selectedAssets.length ? (
+                <div className="flex gap-2 overflow-x-auto border-b border-zinc-800 px-3 py-2">
+                  {selectedAssets.map((asset) => (
+                    <div key={asset.id} className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-zinc-700 bg-black/30">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewAsset(asset)}
+                        className="block h-full w-full"
+                        title="预览输入图"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={asset.url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleInputAsset(asset.id)}
+                        className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded bg-black/75 text-white opacity-100 md:opacity-0 md:transition md:group-hover:opacity-100"
+                        title="移除输入图"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <textarea
+                value={props.prompt}
+                onChange={(event) => props.setPrompt(event.target.value)}
+                placeholder="有什么我能帮您画的吗？"
+                className="min-h-24 max-h-40 w-full resize-none border-0 bg-transparent p-3 text-sm text-white outline-none placeholder:text-zinc-500 md:min-h-28"
+              />
+
+              <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={props.openUploadPicker}
+                  className="grid h-9 w-9 place-items-center rounded-md border border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  title="上传图片"
+                >
+                  <Upload size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                  title={`尺寸预设：${sizePillDetail}`}
+                >
+                  <span>{sizePillRatio}</span>
+                  <span className="hidden sm:inline"> · {sizePillDetail}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen((current) => !current)}
+                  aria-expanded={settingsOpen}
+                  className="grid h-9 w-9 place-items-center rounded-md border border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  title="参数"
+                >
+                  <Settings2 size={17} />
+                </button>
+                <button
+                  disabled={props.busy || !providerReady || !props.prompt.trim()}
+                  onClick={props.submitTurn}
+                  className="ml-auto flex h-9 items-center justify-center gap-2 rounded-md bg-white px-4 text-sm font-medium text-black disabled:opacity-50"
+                >
+                  {props.busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                  {providerReady ? "开始创作" : "先配置 Provider"}
+                </button>
+              </div>
+            </div>
+
+            {settingsOpen ? (
+              <div className="order-1 mb-3 max-h-[52vh] overflow-y-auto rounded-lg border border-zinc-800 bg-[#181818] p-3 shadow-2xl">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-zinc-100">创作参数</div>
+                    <div className="text-xs text-zinc-500">模型、尺寸、质量和素材选择</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(false)}
+                    className="grid h-8 w-8 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
+                    title="收起参数"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="模型">
+                    <input
+                      value={props.model}
+                      onChange={(event) => props.setModel(event.target.value)}
+                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+                    />
+                  </Field>
+                  <Field label="质量">
+                    <select
+                      value={props.quality}
+                      onChange={(event) => props.setQuality(event.target.value as "auto" | "low" | "medium" | "high")}
+                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+                    >
+                      {["auto", "low", "medium", "high"].map((item) => (
+                        <option key={item}>{item}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <div className="md:col-span-2">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-500">尺寸预设</span>
+                      <span className="truncate text-[11px] text-zinc-500">API size: {props.size}</span>
+                    </div>
+                    <select
+                      value={props.size}
+                      onChange={(event) => props.setSize(event.target.value)}
+                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+                    >
+                      {sizePresets.map((preset) => (
+                        <option key={preset.size} value={preset.size}>
+                          {preset.ratio} · {preset.label} · {preset.size}
+                        </option>
+                      ))}
+                      {!selectedSizePreset ? <option value={props.size}>自定义 · {props.size}</option> : null}
+                    </select>
+                    <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs leading-5 text-zinc-400">
+                      {selectedSizePreset ? selectedSizePreset.useCase : `当前使用自定义 provider size：${props.size}`}
                     </div>
                   </div>
-                  <p className="mb-4 whitespace-pre-wrap text-sm leading-6 text-zinc-200">{turn.prompt}</p>
-                  {turn.errorMessage ? <p className="mb-4 text-sm text-red-300">{turn.errorMessage}</p> : null}
-                  {outputAssets.length ? (
-                    <div className={outputAssets.length === 1 ? "flex flex-wrap gap-3" : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
-                      {outputAssets.map((asset) => (
-                        <ResultImageCard
+                  <Field label="数量">
+                    <input
+                      type="number"
+                      min={1}
+                      max={4}
+                      value={props.count}
+                      onChange={(event) => props.setCount(clampImageCount(event.target.value))}
+                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+                    />
+                  </Field>
+                </div>
+
+                <div className="mt-4">
+                  <div className="mb-2 flex items-center justify-between text-sm">
+                    <span className="text-zinc-300">输入图片</span>
+                    <span className="text-xs text-zinc-500">{props.selectedAssetIds.length} 已选</span>
+                  </div>
+                  {props.assets.length ? (
+                    <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-6">
+                      {props.assets.map((asset) => (
+                        <button
                           key={asset.id}
-                          asset={asset}
-                          continueEditing={props.continueEditing}
-                          onPreview={setPreviewAsset}
-                        />
+                          type="button"
+                          onClick={() => toggleInputAsset(asset.id)}
+                          className={`overflow-hidden rounded-md border text-left ${
+                            props.selectedAssetIds.includes(asset.id) ? "border-sky-400" : "border-zinc-800"
+                          }`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={asset.url} alt="" className="aspect-square w-full bg-black/30 object-cover" />
+                          <div className="space-y-0.5 px-1.5 py-1">
+                            <div className="truncate text-[11px] text-zinc-300">{asset.originalFilename ?? asset.kind}</div>
+                            <div className="text-[10px] text-zinc-500">{formatBytes(asset.sizeBytes)}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-500">
+                      暂无可选素材，可上传后再用于编辑。
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  onClick={props.openUploadPicker}
+                  className={`mt-4 cursor-pointer rounded-lg border border-dashed p-3 transition ${
+                    dragActive ? "border-sky-400 bg-sky-950/30" : "border-zinc-700 bg-zinc-950 hover:border-zinc-500"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-zinc-900 text-zinc-200">
+                      <Upload size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-zinc-100">添加图片</div>
+                      <div className="truncate text-xs text-zinc-500">点击、拖放或粘贴 PNG、JPEG、WebP。</div>
+                    </div>
+                  </div>
+
+                  {props.uploadPreviews.length ? (
+                    <div className="mt-3 space-y-2" onClick={(event) => event.stopPropagation()}>
+                      {props.uploadPreviews.map((preview) => (
+                        <UploadPreviewRow key={preview.id} preview={preview} />
                       ))}
                     </div>
                   ) : null}
-                </article>
-              );
-            })}
-            {props.pendingTurn ? (
-              <PendingTurnCard turn={props.pendingTurn} elapsedMs={Math.max(0, timerNow - props.pendingTurn.startedAt)} />
+                </div>
+              </div>
             ) : null}
-            <div ref={messagesEndRef} />
           </div>
-        )}
-      </section>
-
-      <aside className="max-h-[52vh] shrink-0 overflow-y-auto border-t border-zinc-900 bg-[#151515] p-4 lg:max-h-none lg:min-h-0 lg:border-l lg:border-t-0">
-        {providerWarning ? (
-          <div className="mb-4 rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-100">
-            {providerWarning}
-          </div>
-        ) : null}
-
-        <textarea
-          value={props.prompt}
-          onChange={(event) => props.setPrompt(event.target.value)}
-          placeholder="有什么我能帮您画的吗？"
-          className="min-h-32 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-sm text-white outline-none focus:border-zinc-400"
-        />
-
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <Field label="模型">
-            <input
-              value={props.model}
-              onChange={(event) => props.setModel(event.target.value)}
-              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-            />
-          </Field>
-          <div className="col-span-2">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-xs text-zinc-500">尺寸预设</span>
-              <span className="truncate text-[11px] text-zinc-500">API size: {props.size}</span>
-            </div>
-            <select
-              value={props.size}
-              onChange={(event) => props.setSize(event.target.value)}
-              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-            >
-              {sizePresets.map((preset) => (
-                <option key={preset.size} value={preset.size}>
-                  {preset.ratio} · {preset.label} · {preset.size}
-                </option>
-              ))}
-              {!selectedSizePreset ? <option value={props.size}>自定义 · {props.size}</option> : null}
-            </select>
-            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs leading-5 text-zinc-400">
-              {selectedSizePreset ? selectedSizePreset.useCase : `当前使用自定义 provider size：${props.size}`}
-            </div>
-          </div>
-          <Field label="质量">
-            <select
-              value={props.quality}
-              onChange={(event) => props.setQuality(event.target.value as "auto" | "low" | "medium" | "high")}
-              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-            >
-              {["auto", "low", "medium", "high"].map((item) => (
-                <option key={item}>{item}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="数量">
-            <input
-              type="number"
-              min={1}
-              max={4}
-              value={props.count}
-              onChange={(event) => props.setCount(clampImageCount(event.target.value))}
-              className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-zinc-300">输入图片</span>
-            <span className="text-xs text-zinc-500">{props.selectedAssetIds.length} 已选</span>
-          </div>
-          {props.assets.length ? (
-            <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto">
-              {props.assets.map((asset) => (
-                <button
-                  key={asset.id}
-                  onClick={() => toggleInputAsset(asset.id)}
-                  className={`overflow-hidden rounded-md border text-left ${
-                    props.selectedAssetIds.includes(asset.id) ? "border-sky-400" : "border-zinc-800"
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={asset.url} alt="" className="aspect-square w-full bg-black/30 object-contain" />
-                  <div className="space-y-0.5 px-1.5 py-1">
-                    <div className="truncate text-[11px] text-zinc-300">{asset.originalFilename ?? asset.kind}</div>
-                    <div className="text-[10px] text-zinc-500">{formatBytes(asset.sizeBytes)}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div
-          onClick={props.openUploadPicker}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            setDragActive(true);
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragActive(true);
-          }}
-          onDragLeave={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragActive(false);
-            void props.uploadFiles(event.dataTransfer.files);
-          }}
-          className={`mt-4 cursor-pointer rounded-lg border border-dashed p-3 transition ${
-            dragActive ? "border-sky-400 bg-sky-950/30" : "border-zinc-700 bg-zinc-950 hover:border-zinc-500"
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-zinc-900 text-zinc-200">
-              <Upload size={18} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-zinc-100">添加图片</div>
-              <div className="truncate text-xs text-zinc-500">点击、拖放或粘贴 PNG、JPEG、WebP。</div>
-            </div>
-          </div>
-
-          {props.uploadPreviews.length ? (
-            <div className="mt-3 space-y-2" onClick={(event) => event.stopPropagation()}>
-              {props.uploadPreviews.map((preview) => (
-                <UploadPreviewRow key={preview.id} preview={preview} />
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-5 flex gap-2">
-          <button
-            onClick={props.openUploadPicker}
-            className="grid h-11 w-11 place-items-center rounded-md border border-zinc-700 text-zinc-200 hover:bg-zinc-800"
-            title="上传图片"
-          >
-            <Upload size={18} />
-          </button>
-          <button
-            disabled={
-              props.busy ||
-              !providerReady ||
-              !props.prompt.trim()
-            }
-            onClick={props.submitTurn}
-            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-md bg-white px-4 text-sm font-medium text-black disabled:opacity-50"
-          >
-            {props.busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-            {providerReady ? "开始创作" : "先配置真实 Provider"}
-          </button>
-        </div>
-      </aside>
+        </aside>
       </div>
       {previewAsset ? <ImagePreviewOverlay asset={previewAsset} onClose={() => setPreviewAsset(null)} /> : null}
     </>
