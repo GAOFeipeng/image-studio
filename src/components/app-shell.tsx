@@ -159,6 +159,7 @@ type ProviderSettings = {
   editPath: string;
   defaultModel: string;
   defaultSize: string;
+  defaultQuality: "auto" | "low" | "medium" | "high";
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   source?: "global" | "user";
@@ -388,6 +389,7 @@ export function AppShell() {
     setProviderSettings(data.settings);
     setModel(data.settings.defaultModel);
     setSize(data.settings.defaultSize);
+    setQuality(data.settings.defaultQuality);
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -794,7 +796,6 @@ export function AppShell() {
                   : view === "settings"
                     ? "个人设置"
                     : "管理员控制台"}
-              {view === "studio" ? <span className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400">{model}</span> : null}
             </div>
             <div className="mt-1 text-xs text-zinc-500">
               {view === "studio"
@@ -849,11 +850,8 @@ export function AppShell() {
             prompt={prompt}
             setPrompt={setPrompt}
             model={model}
-            setModel={setModel}
             size={size}
             setSize={setSize}
-            quality={quality}
-            setQuality={setQuality}
             count={count}
             setCount={setCount}
             selectedAssetIds={selectedAssetIds}
@@ -863,7 +861,6 @@ export function AppShell() {
             continueEditing={continueEditing}
             openUploadPicker={openUploadPicker}
             uploadFiles={uploadFiles}
-            uploadPreviews={uploadPreviews}
             providerSettings={providerSettings}
             busy={busy}
           />
@@ -887,6 +884,7 @@ export function AppShell() {
               setProviderSettings(settings);
               setModel(settings.defaultModel);
               setSize(settings.defaultSize);
+              setQuality(settings.defaultQuality);
             }}
           />
         ) : null}
@@ -968,11 +966,8 @@ function StudioView(props: {
   prompt: string;
   setPrompt: (value: string) => void;
   model: string;
-  setModel: (value: string) => void;
   size: string;
   setSize: (value: string) => void;
-  quality: "auto" | "low" | "medium" | "high";
-  setQuality: (value: "auto" | "low" | "medium" | "high") => void;
   count: number;
   setCount: (value: number) => void;
   selectedAssetIds: string[];
@@ -982,12 +977,10 @@ function StudioView(props: {
   continueEditing: (asset: Asset) => void;
   openUploadPicker: () => void;
   uploadFiles: (files: FileList | File[] | null) => Promise<void>;
-  uploadPreviews: UploadPreview[];
   providerSettings: ProviderSettings | null;
   busy: boolean;
 }) {
   const [dragActive, setDragActive] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const [timerNow, setTimerNow] = useState(() => Date.now());
   const messagesScrollRef = useRef<HTMLElement>(null);
@@ -1190,24 +1183,43 @@ function StudioView(props: {
                 >
                   <Upload size={17} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen(true)}
+                <label
                   className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
                   title={`尺寸预设：${sizePillDetail}`}
                 >
-                  <span>{sizePillRatio}</span>
-                  <span className="hidden sm:inline"> · {sizePillDetail}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen((current) => !current)}
-                  aria-expanded={settingsOpen}
-                  className="grid h-9 w-9 place-items-center rounded-md border border-zinc-700 text-zinc-200 hover:bg-zinc-800"
-                  title="参数"
+                  <span className="sr-only">尺寸预设</span>
+                  <select
+                    value={props.size}
+                    onChange={(event) => props.setSize(event.target.value)}
+                    className="h-full appearance-none bg-transparent pr-1 text-xs font-medium outline-none"
+                    aria-label="尺寸预设"
+                  >
+                    {sizePresets.map((preset) => (
+                      <option key={preset.size} value={preset.size}>
+                        {preset.ratio}
+                      </option>
+                    ))}
+                    {!selectedSizePreset ? <option value={props.size}>{sizePillRatio}</option> : null}
+                  </select>
+                </label>
+                <label
+                  className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                  title="生成数量"
                 >
-                  <Settings2 size={17} />
-                </button>
+                  <span className="sr-only">生成数量</span>
+                  <select
+                    value={props.count}
+                    onChange={(event) => props.setCount(clampImageCount(event.target.value))}
+                    className="h-full appearance-none bg-transparent pr-1 text-xs font-medium outline-none"
+                    aria-label="生成数量"
+                  >
+                    {[1, 2, 3, 4].map((item) => (
+                      <option key={item} value={item}>
+                        {item} 张
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   disabled={props.busy || !providerReady || !props.prompt.trim()}
                   onClick={props.submitTurn}
@@ -1218,134 +1230,6 @@ function StudioView(props: {
                 </button>
               </div>
             </div>
-
-            {settingsOpen ? (
-              <div className="order-1 mb-3 max-h-[52vh] overflow-y-auto rounded-lg border border-zinc-800 bg-[#181818] p-3 shadow-2xl">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium text-zinc-100">创作参数</div>
-                    <div className="text-xs text-zinc-500">模型、尺寸、质量和素材选择</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSettingsOpen(false)}
-                    className="grid h-8 w-8 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
-                    title="收起参数"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="模型">
-                    <input
-                      value={props.model}
-                      onChange={(event) => props.setModel(event.target.value)}
-                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-                    />
-                  </Field>
-                  <Field label="质量">
-                    <select
-                      value={props.quality}
-                      onChange={(event) => props.setQuality(event.target.value as "auto" | "low" | "medium" | "high")}
-                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-                    >
-                      {["auto", "low", "medium", "high"].map((item) => (
-                        <option key={item}>{item}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <div className="md:col-span-2">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <span className="text-xs text-zinc-500">尺寸预设</span>
-                      <span className="truncate text-[11px] text-zinc-500">API size: {props.size}</span>
-                    </div>
-                    <select
-                      value={props.size}
-                      onChange={(event) => props.setSize(event.target.value)}
-                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-                    >
-                      {sizePresets.map((preset) => (
-                        <option key={preset.size} value={preset.size}>
-                          {preset.ratio} · {preset.label} · {preset.size}
-                        </option>
-                      ))}
-                      {!selectedSizePreset ? <option value={props.size}>自定义 · {props.size}</option> : null}
-                    </select>
-                    <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs leading-5 text-zinc-400">
-                      {selectedSizePreset ? selectedSizePreset.useCase : `当前使用自定义 provider size：${props.size}`}
-                    </div>
-                  </div>
-                  <Field label="数量">
-                    <input
-                      type="number"
-                      min={1}
-                      max={4}
-                      value={props.count}
-                      onChange={(event) => props.setCount(clampImageCount(event.target.value))}
-                      className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
-                    />
-                  </Field>
-                </div>
-
-                <div className="mt-4">
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="text-zinc-300">输入图片</span>
-                    <span className="text-xs text-zinc-500">{props.selectedAssetIds.length} 已选</span>
-                  </div>
-                  {props.assets.length ? (
-                    <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-6">
-                      {props.assets.map((asset) => (
-                        <button
-                          key={asset.id}
-                          type="button"
-                          onClick={() => toggleInputAsset(asset.id)}
-                          className={`overflow-hidden rounded-md border text-left ${
-                            props.selectedAssetIds.includes(asset.id) ? "border-sky-400" : "border-zinc-800"
-                          }`}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={asset.url} alt="" className="aspect-square w-full bg-black/30 object-cover" />
-                          <div className="space-y-0.5 px-1.5 py-1">
-                            <div className="truncate text-[11px] text-zinc-300">{asset.originalFilename ?? asset.kind}</div>
-                            <div className="text-[10px] text-zinc-500">{formatBytes(asset.sizeBytes)}</div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-500">
-                      暂无可选素材，可上传后再用于编辑。
-                    </div>
-                  )}
-                </div>
-
-                <div
-                  onClick={props.openUploadPicker}
-                  className={`mt-4 cursor-pointer rounded-lg border border-dashed p-3 transition ${
-                    dragActive ? "border-sky-400 bg-sky-950/30" : "border-zinc-700 bg-zinc-950 hover:border-zinc-500"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-zinc-900 text-zinc-200">
-                      <Upload size={18} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-100">添加图片</div>
-                      <div className="truncate text-xs text-zinc-500">点击、拖放或粘贴 PNG、JPEG、WebP。</div>
-                    </div>
-                  </div>
-
-                  {props.uploadPreviews.length ? (
-                    <div className="mt-3 space-y-2" onClick={(event) => event.stopPropagation()}>
-                      {props.uploadPreviews.map((preview) => (
-                        <UploadPreviewRow key={preview.id} preview={preview} />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
           </div>
         </aside>
       </div>
@@ -1475,29 +1359,6 @@ function ImagePreviewOverlay(props: { asset: Asset; onClose: () => void }) {
           className="max-h-[calc(100vh-5rem)] max-w-[calc(100vw-2rem)] rounded-md object-contain shadow-2xl"
         />
       </button>
-    </div>
-  );
-}
-
-function UploadPreviewRow({ preview }: { preview: UploadPreview }) {
-  return (
-    <div className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 p-2">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={preview.previewUrl} alt="" className="h-12 w-12 shrink-0 rounded bg-black/30 object-contain" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-medium text-zinc-200">{preview.name}</div>
-        <div className="mt-0.5 text-[11px] text-zinc-500">{formatBytes(preview.size)}</div>
-        {preview.error ? <div className="mt-1 truncate text-[11px] text-red-300">{preview.error}</div> : null}
-      </div>
-      <div className="shrink-0 text-zinc-400">
-        {preview.status === "uploading" || preview.status === "queued" ? (
-          <Loader2 className="animate-spin" size={16} />
-        ) : preview.status === "done" ? (
-          <CheckCircle2 className="text-emerald-300" size={16} />
-        ) : (
-          <AlertCircle className="text-red-300" size={16} />
-        )}
-      </div>
     </div>
   );
 }
@@ -1632,6 +1493,7 @@ function SettingsView(props: {
               props.providerSettings.editPath,
               props.providerSettings.defaultModel,
               props.providerSettings.defaultSize,
+              props.providerSettings.defaultQuality,
               props.providerSettings.apiKeyPreview,
             ].join("|")}
             title="个人 Provider"
@@ -1688,6 +1550,7 @@ function AdminView(props: {
             props.data.providerSettings.editPath,
             props.data.providerSettings.defaultModel,
             props.data.providerSettings.defaultSize,
+            props.data.providerSettings.defaultQuality,
             props.data.providerSettings.apiKeyPreview,
           ].join("|")}
           title="全局 Provider 默认值"
@@ -1799,6 +1662,7 @@ function ProviderSettingsForm(props: {
     clearApiKey: false,
     defaultModel: props.settings.defaultModel,
     defaultSize: props.settings.defaultSize,
+    defaultQuality: props.settings.defaultQuality,
   });
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -1888,6 +1752,22 @@ function ProviderSettingsForm(props: {
             onChange={(event) => setSettingsForm((current) => ({ ...current, defaultSize: event.target.value }))}
             className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
           />
+        </Field>
+        <Field label="Default quality">
+          <select
+            value={settingsForm.defaultQuality}
+            onChange={(event) =>
+              setSettingsForm((current) => ({
+                ...current,
+                defaultQuality: event.target.value as ProviderSettings["defaultQuality"],
+              }))
+            }
+            className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+          >
+            {["auto", "low", "medium", "high"].map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </select>
         </Field>
         <Field label="API key">
           <input

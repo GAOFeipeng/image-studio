@@ -201,6 +201,7 @@ model UserProviderSetting {
   apiKey         String?
   defaultModel   String?
   defaultSize    String?
+  defaultQuality String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

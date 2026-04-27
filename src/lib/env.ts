@@ -13,6 +13,7 @@ const envSchema = z.object({
   IMAGE_API_KEY: z.string().optional(),
   IMAGE_DEFAULT_MODEL: z.string().default("gpt-image-2"),
   IMAGE_DEFAULT_SIZE: z.string().default("1024x1024"),
+  IMAGE_DEFAULT_QUALITY: z.enum(["auto", "low", "medium", "high"]).default("auto"),
   IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
   SETTINGS_ENCRYPTION_KEY: z.string().optional(),
   UPLOAD_DIR: z.string().default("./data/uploads"),

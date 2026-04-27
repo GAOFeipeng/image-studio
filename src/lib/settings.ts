@@ -14,6 +14,7 @@ const providerSettingKeys = [
   "image.apiKey",
   "image.defaultModel",
   "image.defaultSize",
+  "image.defaultQuality",
 ] as const;
 
 type ProviderSettingKey = (typeof providerSettingKeys)[number];
@@ -26,6 +27,7 @@ export type ImageProviderSettings = {
   apiKey?: string;
   defaultModel: string;
   defaultSize: string;
+  defaultQuality: "auto" | "low" | "medium" | "high";
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   source: "global" | "user";
@@ -40,6 +42,7 @@ export const imageProviderSettingsSchema = z.object({
   clearApiKey: z.boolean().optional(),
   defaultModel: z.string().trim().min(1).optional(),
   defaultSize: z.string().trim().min(1).optional(),
+  defaultQuality: z.enum(["auto", "low", "medium", "high"]).optional(),
 });
 
 type ImageProviderSettingsInput = z.infer<typeof imageProviderSettingsSchema>;
@@ -51,6 +54,7 @@ type UserProviderSettingData = {
   apiKey?: string | null;
   defaultModel?: string;
   defaultSize?: string;
+  defaultQuality?: string;
 };
 
 const keyByField: Record<Exclude<keyof ImageProviderSettingsInput, "clearApiKey">, ProviderSettingKey> = {
@@ -61,6 +65,7 @@ const keyByField: Record<Exclude<keyof ImageProviderSettingsInput, "clearApiKey"
   apiKey: "image.apiKey",
   defaultModel: "image.defaultModel",
   defaultSize: "image.defaultSize",
+  defaultQuality: "image.defaultQuality",
 };
 
 export async function getImageProviderSettings(user?: SafeUser): Promise<ImageProviderSettings> {
@@ -89,6 +94,7 @@ async function getGlobalImageProviderSettings(): Promise<ImageProviderSettings> 
     apiKey,
     defaultModel: values.get("image.defaultModel")?.value || env.IMAGE_DEFAULT_MODEL,
     defaultSize: values.get("image.defaultSize")?.value || env.IMAGE_DEFAULT_SIZE,
+    defaultQuality: parseQuality(values.get("image.defaultQuality")?.value ?? env.IMAGE_DEFAULT_QUALITY),
     hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
     apiKeyPreview: apiKey ? maskSecret(apiKey) : null,
     source: "global",
@@ -112,6 +118,7 @@ async function getUserImageProviderSettings(
     apiKey,
     defaultModel: row?.defaultModel || globalSettings.defaultModel,
     defaultSize: row?.defaultSize || globalSettings.defaultSize,
+    defaultQuality: parseQuality(row?.defaultQuality ?? globalSettings.defaultQuality),
     hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
     apiKeyPreview: apiKey ? maskSecret(apiKey) : null,
     source: "user",
@@ -140,7 +147,7 @@ export async function updateImageProviderSettings(input: ImageProviderSettingsIn
     updates.push(upsertSetting("image.editPath", assertProviderPath(data.editPath.trim(), "Edit path"), false));
   }
 
-  for (const field of ["defaultModel", "defaultSize"] as const) {
+  for (const field of ["defaultModel", "defaultSize", "defaultQuality"] as const) {
     if (data[field] !== undefined) {
       updates.push(upsertSetting(keyByField[field], data[field].trim(), false));
     }
@@ -210,13 +217,16 @@ export async function getPublicImageProviderSettings(user?: SafeUser) {
     editPath: settings.editPath,
     defaultModel: settings.defaultModel,
     defaultSize: settings.defaultSize,
+    defaultQuality: settings.defaultQuality,
     hasApiKey: settings.hasApiKey,
     apiKeyPreview: settings.apiKeyPreview,
     source: settings.source,
   };
 }
 
-export async function applyImageParamDefaults<T extends { model?: string; size?: string; n?: number }>(
+export async function applyImageParamDefaults<
+  T extends { model?: string; size?: string; quality?: "auto" | "low" | "medium" | "high"; n?: number },
+>(
   params: T,
   user?: SafeUser,
 ) {
@@ -225,6 +235,7 @@ export async function applyImageParamDefaults<T extends { model?: string; size?:
     ...params,
     model: params.model ?? settings.defaultModel,
     size: params.size ?? settings.defaultSize,
+    quality: params.quality ?? settings.defaultQuality,
     n: params.n ?? 1,
   };
 }
@@ -264,6 +275,10 @@ function buildUserProviderSettingData(data: ImageProviderSettingsInput) {
     updateData.defaultSize = data.defaultSize.trim();
   }
 
+  if (data.defaultQuality !== undefined) {
+    updateData.defaultQuality = data.defaultQuality;
+  }
+
   if (data.clearApiKey) {
     updateData.apiKey = null;
   } else if (data.apiKey !== undefined && data.apiKey.trim()) {
@@ -275,6 +290,10 @@ function buildUserProviderSettingData(data: ImageProviderSettingsInput) {
 
 function parseProvider(value: string) {
   return value === "mock" ? "mock" : "openai-compatible";
+}
+
+function parseQuality(value: string) {
+  return value === "low" || value === "medium" || value === "high" || value === "auto" ? value : "auto";
 }
 
 function encryptSecret(value: string) {

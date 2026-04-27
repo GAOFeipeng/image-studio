@@ -15,6 +15,7 @@ export const imageParamsSchema = rawImageParamsSchema.default({}).transform((par
   ...params,
   model: params.model ?? env.IMAGE_DEFAULT_MODEL,
   size: params.size ?? env.IMAGE_DEFAULT_SIZE,
+  quality: params.quality ?? env.IMAGE_DEFAULT_QUALITY,
   n: params.n ?? 1,
 }));
 
