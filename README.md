@@ -6,7 +6,7 @@ Image Studio is a self-hosted image generation and image editing workspace. The 
 
 - Next.js App Router, TypeScript, Tailwind CSS.
 - Prisma + PostgreSQL for users, sessions, turns, assets, usage events, and audit logs.
-- Server-side OpenAI-compatible image provider adapter with admin-configurable endpoint settings.
+- Server-side OpenAI-compatible image provider adapter with per-user API keys and admin-configurable defaults.
 - Local file storage mounted at `/data/uploads`.
 - Login/register, interactive first-admin bootstrap, user/admin role checks.
 - Image generation, image upload, image editing, retry, asset pool, and admin analytics.
@@ -14,7 +14,7 @@ Image Studio is a self-hosted image generation and image editing workspace. The 
 
 ## Security Notes
 
-Do not put provider keys in `NEXT_PUBLIC_*` variables or frontend code. Provider credentials can be supplied through server-side environment variables or the administrator Provider Settings panel. Saved keys are encrypted at rest and only returned as masked previews.
+Do not put provider keys in `NEXT_PUBLIC_*` variables or frontend code. Each user should add their own provider key in Personal Settings; image generation and editing use the current user's key, not a shared administrator key. Administrator settings provide site defaults such as base URL, paths, model, and size. Saved keys are encrypted at rest and only returned as masked previews.
 
 The key that was pasted into the planning conversation should be rotated before production use.
 
@@ -121,9 +121,11 @@ Important server-only variables:
 - `GET /api/auth/bootstrap`
 - `GET /api/health`
 - `GET /api/provider-settings`
+- `PUT /api/provider-settings`
 - `POST /api/sessions`
 - `GET /api/sessions`
 - `GET /api/sessions/:id`
+- `DELETE /api/sessions/:id`
 - `GET /api/sessions/:id/assets`
 - `POST /api/sessions/:id/assets/upload`
 - `GET /api/sessions/:id/turns`

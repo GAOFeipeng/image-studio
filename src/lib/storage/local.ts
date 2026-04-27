@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "@/lib/env";
 import { HttpError } from "@/lib/http";
@@ -16,6 +16,10 @@ export async function readBuffer(storageKey: string) {
 
 export async function statBuffer(storageKey: string) {
   return stat(resolveStoragePath(storageKey));
+}
+
+export async function deleteBuffer(storageKey: string) {
+  await rm(resolveStoragePath(storageKey), { force: true });
 }
 
 export function assetFileUrl(assetId: string) {

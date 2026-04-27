@@ -28,6 +28,7 @@ export type ImageProviderSettings = {
   defaultSize: string;
   hasApiKey: boolean;
   apiKeyPreview: string | null;
+  source: "global" | "user";
 };
 
 export const imageProviderSettingsSchema = z.object({
@@ -42,6 +43,15 @@ export const imageProviderSettingsSchema = z.object({
 });
 
 type ImageProviderSettingsInput = z.infer<typeof imageProviderSettingsSchema>;
+type UserProviderSettingData = {
+  provider?: string;
+  apiBaseUrl?: string;
+  generationPath?: string;
+  editPath?: string;
+  apiKey?: string | null;
+  defaultModel?: string;
+  defaultSize?: string;
+};
 
 const keyByField: Record<Exclude<keyof ImageProviderSettingsInput, "clearApiKey">, ProviderSettingKey> = {
   provider: "image.provider",
@@ -53,7 +63,16 @@ const keyByField: Record<Exclude<keyof ImageProviderSettingsInput, "clearApiKey"
   defaultSize: "image.defaultSize",
 };
 
-export async function getImageProviderSettings(): Promise<ImageProviderSettings> {
+export async function getImageProviderSettings(user?: SafeUser): Promise<ImageProviderSettings> {
+  const globalSettings = await getGlobalImageProviderSettings();
+  if (!user) {
+    return globalSettings;
+  }
+
+  return getUserImageProviderSettings(user, globalSettings);
+}
+
+async function getGlobalImageProviderSettings(): Promise<ImageProviderSettings> {
   const rows = await prisma.appSetting.findMany({
     where: { key: { in: [...providerSettingKeys] } },
   });
@@ -72,6 +91,30 @@ export async function getImageProviderSettings(): Promise<ImageProviderSettings>
     defaultSize: values.get("image.defaultSize")?.value || env.IMAGE_DEFAULT_SIZE,
     hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
     apiKeyPreview: apiKey ? maskSecret(apiKey) : null,
+    source: "global",
+  };
+}
+
+async function getUserImageProviderSettings(
+  user: SafeUser,
+  globalSettings: ImageProviderSettings,
+): Promise<ImageProviderSettings> {
+  const row = await prisma.userProviderSetting.findUnique({
+    where: { userId: user.id },
+  });
+  const apiKey = row?.apiKey ? decryptSecret(row.apiKey) : undefined;
+
+  return {
+    provider: parseProvider(row?.provider ?? globalSettings.provider),
+    apiBaseUrl: row?.apiBaseUrl || globalSettings.apiBaseUrl,
+    generationPath: row?.generationPath || globalSettings.generationPath,
+    editPath: row?.editPath || globalSettings.editPath,
+    apiKey,
+    defaultModel: row?.defaultModel || globalSettings.defaultModel,
+    defaultSize: row?.defaultSize || globalSettings.defaultSize,
+    hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
+    apiKeyPreview: apiKey ? maskSecret(apiKey) : null,
+    source: "user",
   };
 }
 
@@ -127,8 +170,39 @@ export async function updateImageProviderSettings(input: ImageProviderSettingsIn
   return getPublicImageProviderSettings();
 }
 
-export async function getPublicImageProviderSettings() {
-  const settings = await getImageProviderSettings();
+export async function updateUserImageProviderSettings(input: ImageProviderSettingsInput, actor: SafeUser) {
+  const data = imageProviderSettingsSchema.parse(input);
+  const updateData = buildUserProviderSettingData(data);
+
+  await prisma.userProviderSetting.upsert({
+    where: { userId: actor.id },
+    create: {
+      userId: actor.id,
+      ...updateData,
+    },
+    update: updateData,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: actor.id,
+      action: "user.provider_settings.update",
+      targetType: "UserProviderSetting",
+      targetId: actor.id,
+      metadata: {
+        fields: Object.entries(data)
+          .filter(([key, value]) => key !== "apiKey" && value !== undefined)
+          .map(([key]) => key),
+        apiKeyChanged: Boolean(data.clearApiKey || data.apiKey?.trim()),
+      },
+    },
+  });
+
+  return getPublicImageProviderSettings(actor);
+}
+
+export async function getPublicImageProviderSettings(user?: SafeUser) {
+  const settings = await getImageProviderSettings(user);
   return {
     provider: settings.provider,
     apiBaseUrl: settings.apiBaseUrl,
@@ -138,11 +212,15 @@ export async function getPublicImageProviderSettings() {
     defaultSize: settings.defaultSize,
     hasApiKey: settings.hasApiKey,
     apiKeyPreview: settings.apiKeyPreview,
+    source: settings.source,
   };
 }
 
-export async function applyImageParamDefaults<T extends { model?: string; size?: string; n?: number }>(params: T) {
-  const settings = await getImageProviderSettings();
+export async function applyImageParamDefaults<T extends { model?: string; size?: string; n?: number }>(
+  params: T,
+  user?: SafeUser,
+) {
+  const settings = await getImageProviderSettings(user);
   return {
     ...params,
     model: params.model ?? settings.defaultModel,
@@ -157,6 +235,42 @@ function upsertSetting(key: ProviderSettingKey, value: string | null, encrypted:
     create: { key, value, encrypted },
     update: { value, encrypted },
   });
+}
+
+function buildUserProviderSettingData(data: ImageProviderSettingsInput) {
+  const updateData: UserProviderSettingData = {};
+
+  if (data.provider !== undefined) {
+    updateData.provider = data.provider;
+  }
+
+  if (data.apiBaseUrl !== undefined) {
+    updateData.apiBaseUrl = normalizeProviderBaseUrl(data.apiBaseUrl);
+  }
+
+  if (data.generationPath !== undefined) {
+    updateData.generationPath = assertProviderPath(data.generationPath.trim(), "Generation path");
+  }
+
+  if (data.editPath !== undefined) {
+    updateData.editPath = assertProviderPath(data.editPath.trim(), "Edit path");
+  }
+
+  if (data.defaultModel !== undefined) {
+    updateData.defaultModel = data.defaultModel.trim();
+  }
+
+  if (data.defaultSize !== undefined) {
+    updateData.defaultSize = data.defaultSize.trim();
+  }
+
+  if (data.clearApiKey) {
+    updateData.apiKey = null;
+  } else if (data.apiKey !== undefined && data.apiKey.trim()) {
+    updateData.apiKey = encryptSecret(data.apiKey.trim());
+  }
+
+  return updateData;
 }
 
 function parseProvider(value: string) {

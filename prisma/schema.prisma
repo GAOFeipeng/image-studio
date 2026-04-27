@@ -69,6 +69,7 @@ model User {
   assets      Asset[]
   usageEvents UsageEvent[]
   auditLogs   AuditLog[]   @relation("ActorAuditLogs")
+  providerSetting UserProviderSetting?
 }
 
 model Session {
@@ -188,4 +189,20 @@ model AppSetting {
   encrypted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserProviderSetting {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  provider       String?
+  apiBaseUrl     String?
+  generationPath String?
+  editPath       String?
+  apiKey         String?
+  defaultModel   String?
+  defaultSize    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

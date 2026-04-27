@@ -16,6 +16,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -160,6 +161,7 @@ type ProviderSettings = {
   defaultSize: string;
   hasApiKey: boolean;
   apiKeyPreview: string | null;
+  source?: "global" | "user";
 };
 
 type ApiError = {
@@ -216,7 +218,7 @@ export function AppShell() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [view, setView] = useState<"studio" | "assets" | "admin">("studio");
+  const [view, setView] = useState<"studio" | "assets" | "settings" | "admin">("studio");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(defaultModel);
   const [size, setSize] = useState(sizePresets[0].size);
@@ -379,9 +381,6 @@ export function AppShell() {
       auditLogs: auditLogs.auditLogs,
       providerSettings: providerSettings.settings,
     });
-    setProviderSettings(providerSettings.settings);
-    setModel(providerSettings.settings.defaultModel);
-    setSize(providerSettings.settings.defaultSize);
   }
 
   async function refreshProviderDefaults() {
@@ -452,6 +451,44 @@ export function AppShell() {
     setView("studio");
   }
 
+  async function deleteSession(session: Session) {
+    const confirmed = window.confirm(`删除会话「${session.title}」？会话内的任务和图片资产也会被删除。`);
+    if (!confirmed) return;
+
+    setBusy(true);
+    setMessage(null);
+
+    try {
+      await request<{ ok: true }>(`/api/sessions/${session.id}`, { method: "DELETE" });
+      const remaining = sessions.filter((item) => item.id !== session.id);
+
+      if (remaining.length === 0) {
+        const created = await request<{ session: Session }>("/api/sessions", {
+          method: "POST",
+          body: JSON.stringify({ title: "新创作" }),
+        });
+        setSessions([created.session]);
+        setSelectedSessionId(created.session.id);
+        setAssets([]);
+        setTurns([]);
+      } else {
+        setSessions(remaining);
+        if (selectedSessionId === session.id) {
+          setSelectedSessionId(remaining[0].id);
+          setAssets([]);
+          setTurns([]);
+        }
+      }
+
+      setSelectedAssetIds([]);
+      setPendingTurn((current) => (current?.sessionId === session.id ? null : current));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除会话失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function uploadFiles(files: FileList | File[] | null) {
     const selectedFiles = Array.from(files ?? []);
     if (!selectedFiles.length || !selectedSessionId) return;
@@ -514,7 +551,7 @@ export function AppShell() {
     const promptText = prompt;
     if (!sessionId || !promptText.trim()) return;
     if (providerSettings?.provider !== "openai-compatible" || !providerSettings.hasApiKey) {
-      setMessage("请先在管理员端配置真实 OpenAI-compatible Provider 和 API key。");
+      setMessage("请先在个人设置里配置自己的 OpenAI-compatible Provider 和 API key。");
       return;
     }
 
@@ -685,6 +722,7 @@ export function AppShell() {
         <nav className="space-y-1 px-3 py-2">
           <SidebarButton active={view === "studio"} icon={<Edit3 size={19} />} label="工作台" onClick={() => setView("studio")} />
           <SidebarButton active={view === "assets"} icon={<Layers size={19} />} label="资产池" onClick={() => setView("assets")} />
+          <SidebarButton active={view === "settings"} icon={<Settings2 size={19} />} label="个人设置" onClick={() => setView("settings")} />
           {user.role === "ADMIN" ? (
             <SidebarButton active={view === "admin"} icon={<BarChart3 size={19} />} label="管理员" onClick={() => setView("admin")} />
           ) : null}
@@ -693,22 +731,35 @@ export function AppShell() {
         <div className="px-5 pb-2 pt-5 text-xs uppercase tracking-wide text-zinc-500">会话</div>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
           {sessions.map((session) => (
-            <button
+            <div
               key={session.id}
-              onClick={() => {
-                if (session.id !== selectedSessionId) setSelectedAssetIds([]);
-                setSelectedSessionId(session.id);
-                setView("studio");
-              }}
-              className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+              className={`group flex items-center gap-1 rounded-md ${
                 selectedSessionId === session.id ? "bg-zinc-800 text-white" : "text-zinc-300 hover:bg-zinc-900"
               }`}
             >
-              <div className="truncate font-medium">{session.title}</div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {session._count?.turns ?? 0} 轮 / {session._count?.assets ?? 0} 图
-              </div>
-            </button>
+              <button
+                onClick={() => {
+                  if (session.id !== selectedSessionId) setSelectedAssetIds([]);
+                  setSelectedSessionId(session.id);
+                  setView("studio");
+                }}
+                className="min-w-0 flex-1 px-3 py-2 text-left text-sm"
+              >
+                <div className="truncate font-medium">{session.title}</div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  {session._count?.turns ?? 0} 轮 / {session._count?.assets ?? 0} 图
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteSession(session)}
+                disabled={busy}
+                className="mr-1 grid h-8 w-8 shrink-0 place-items-center rounded-md text-zinc-500 opacity-100 hover:bg-zinc-800 hover:text-red-300 disabled:opacity-40 md:opacity-0 md:transition md:group-hover:opacity-100"
+                title="删除会话"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           ))}
         </div>
 
@@ -736,11 +787,23 @@ export function AppShell() {
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-zinc-900 px-4 md:px-7">
           <div>
             <div className="flex items-center gap-2 text-lg font-semibold md:text-2xl">
-              {view === "studio" ? selectedSession?.title ?? "工作台" : view === "assets" ? "资产池" : "管理员控制台"}
+              {view === "studio"
+                ? selectedSession?.title ?? "工作台"
+                : view === "assets"
+                  ? "资产池"
+                  : view === "settings"
+                    ? "个人设置"
+                    : "管理员控制台"}
               {view === "studio" ? <span className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400">{model}</span> : null}
             </div>
             <div className="mt-1 text-xs text-zinc-500">
-              {view === "studio" ? "提示词、输入图和资产复用" : view === "assets" ? "上传图和创作结果集中管理" : "使用情况、任务健康和审计"}
+              {view === "studio"
+                ? "提示词、输入图和资产复用"
+                : view === "assets"
+                  ? "上传图和创作结果集中管理"
+                  : view === "settings"
+                    ? "配置自己的图像供应商和 API key"
+                    : "使用情况、任务健康和审计"}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -750,6 +813,13 @@ export function AppShell() {
               title="刷新"
             >
               <RefreshCw size={17} />
+            </button>
+            <button
+              onClick={() => setView("settings")}
+              className="grid h-9 w-9 place-items-center rounded-md text-zinc-300 hover:bg-zinc-800"
+              title="个人设置"
+            >
+              <Settings2 size={17} />
             </button>
           </div>
         </header>
@@ -805,6 +875,19 @@ export function AppShell() {
             selectedAssetIds={selectedAssetIds}
             setSelectedAssetIds={setSelectedAssetIds}
             continueEditing={continueEditing}
+          />
+        ) : null}
+
+        {view === "settings" ? (
+          <SettingsView
+            providerSettings={providerSettings}
+            request={request}
+            setMessage={setMessage}
+            onProviderSettingsSaved={(settings) => {
+              setProviderSettings(settings);
+              setModel(settings.defaultModel);
+              setSize(settings.defaultSize);
+            }}
           />
         ) : null}
 
@@ -912,11 +995,11 @@ function StudioView(props: {
   const shouldAutoScrollRef = useRef(true);
   const providerReady = props.providerSettings?.provider === "openai-compatible" && props.providerSettings.hasApiKey;
   const providerWarning = !props.providerSettings
-        ? "正在读取图像供应商配置。"
+    ? "正在读取图像供应商配置。"
     : props.providerSettings.provider === "mock"
-      ? "当前是开发 mock provider，不会调用真实文生图接口。请在管理员端切换到 OpenAI-compatible。"
+      ? "当前是 mock provider，不会调用真实文生图接口。请在个人设置里切换到 OpenAI-compatible。"
       : !props.providerSettings.hasApiKey
-        ? "OpenAI-compatible provider 尚未配置 API key。请在管理员端填写后再创作。"
+        ? "OpenAI-compatible provider 尚未配置个人 API key。请在个人设置里填写后再创作。"
         : null;
   const hasMessages = props.turns.length > 0 || Boolean(props.pendingTurn);
   const pendingTurnId = props.pendingTurn?.id ?? null;
@@ -1530,6 +1613,45 @@ function ImageCard(props: {
   );
 }
 
+function SettingsView(props: {
+  providerSettings: ProviderSettings | null;
+  request: <T>(url: string, init?: RequestInit) => Promise<T>;
+  setMessage: (message: string | null) => void;
+  onProviderSettingsSaved: (settings: ProviderSettings) => void;
+}) {
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
+      <div className="mx-auto max-w-5xl">
+        {props.providerSettings ? (
+          <ProviderSettingsForm
+            key={[
+              "user",
+              props.providerSettings.apiBaseUrl,
+              props.providerSettings.provider,
+              props.providerSettings.generationPath,
+              props.providerSettings.editPath,
+              props.providerSettings.defaultModel,
+              props.providerSettings.defaultSize,
+              props.providerSettings.apiKeyPreview,
+            ].join("|")}
+            title="个人 Provider"
+            description={`每个用户独立保存自己的 API key。当前 key：${props.providerSettings.apiKeyPreview ?? "未配置"}。`}
+            endpoint="/api/provider-settings"
+            settings={props.providerSettings}
+            request={props.request}
+            onSaved={props.onProviderSettingsSaved}
+            setMessage={props.setMessage}
+          />
+        ) : (
+          <div className="rounded-lg border border-zinc-800 bg-[#181818] p-4 text-sm text-zinc-400">
+            正在读取个人 Provider 配置。
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function AdminView(props: {
   data: {
     analytics?: Analytics;
@@ -1559,6 +1681,7 @@ function AdminView(props: {
       {props.data.providerSettings ? (
         <ProviderSettingsForm
           key={[
+            "admin",
             props.data.providerSettings.apiBaseUrl,
             props.data.providerSettings.provider,
             props.data.providerSettings.generationPath,
@@ -1567,9 +1690,16 @@ function AdminView(props: {
             props.data.providerSettings.defaultSize,
             props.data.providerSettings.apiKeyPreview,
           ].join("|")}
+          title="全局 Provider 默认值"
+          description={`这里配置站点默认参数。用户出图仍使用个人 API key；全局 key 当前为 ${
+            props.data.providerSettings.apiKeyPreview ?? "未配置"
+          }。`}
+          endpoint="/api/admin/provider-settings"
           settings={props.data.providerSettings}
           request={props.request}
-          refreshAdmin={props.refreshAdmin}
+          onSaved={async () => {
+            await props.refreshAdmin();
+          }}
           setMessage={props.setMessage}
         />
       ) : null}
@@ -1652,9 +1782,12 @@ function AdminView(props: {
 }
 
 function ProviderSettingsForm(props: {
+  title: string;
+  description: string;
+  endpoint: string;
   settings: ProviderSettings;
   request: <T>(url: string, init?: RequestInit) => Promise<T>;
-  refreshAdmin: () => Promise<void>;
+  onSaved: (settings: ProviderSettings) => Promise<void> | void;
   setMessage: (message: string | null) => void;
 }) {
   const [settingsForm, setSettingsForm] = useState({
@@ -1675,11 +1808,11 @@ function ProviderSettingsForm(props: {
     props.setMessage(null);
 
     try {
-      await props.request<{ settings: ProviderSettings }>("/api/admin/provider-settings", {
+      const data = await props.request<{ settings: ProviderSettings }>(props.endpoint, {
         method: "PUT",
         body: JSON.stringify(settingsForm),
       });
-      await props.refreshAdmin();
+      await props.onSaved(data.settings);
     } catch (error) {
       props.setMessage(error instanceof Error ? error.message : "Could not save provider settings");
     } finally {
@@ -1691,10 +1824,8 @@ function ProviderSettingsForm(props: {
     <form onSubmit={saveProviderSettings} className="mb-5 rounded-lg border border-zinc-800 bg-[#181818] p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium text-zinc-200">Provider settings</h2>
-          <p className="mt-1 text-xs text-zinc-500">
-            API key is stored encrypted and only shown as {props.settings.apiKeyPreview ?? "not configured"}.
-          </p>
+          <h2 className="text-sm font-medium text-zinc-200">{props.title}</h2>
+          <p className="mt-1 text-xs text-zinc-500">{props.description}</p>
         </div>
         <button
           disabled={savingSettings}

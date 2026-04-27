@@ -20,7 +20,7 @@ import { getImageProvider } from "@/lib/providers";
 import { ProviderImage } from "@/lib/providers/types";
 import { prisma } from "@/lib/prisma";
 import { normalizeRemoteImageUrl } from "@/lib/security/urls";
-import { assetFileUrl, readBuffer, saveBuffer } from "@/lib/storage/local";
+import { assetFileUrl, deleteBuffer, readBuffer, saveBuffer } from "@/lib/storage/local";
 import { SafeUser } from "@/lib/auth";
 import { env } from "@/lib/env";
 
@@ -74,6 +74,32 @@ export async function createSession(user: SafeUser, title?: string) {
       title: title || "未命名创作",
       ownerId: user.id,
       defaultParams: {},
+    },
+  });
+}
+
+export async function deleteSession(user: SafeUser, sessionId: string) {
+  const session = await getAccessibleSession(user, sessionId);
+  const assets = await prisma.asset.findMany({
+    where: { sessionId: session.id },
+    select: { id: true, storageKey: true },
+  });
+
+  await prisma.$transaction([
+    prisma.asset.deleteMany({ where: { sessionId: session.id } }),
+    prisma.session.delete({ where: { id: session.id } }),
+  ]);
+
+  await Promise.allSettled(assets.map((asset) => deleteBuffer(asset.storageKey)));
+  await writeAuditLog({
+    actor: user,
+    action: "session.deleted",
+    targetType: "Session",
+    targetId: session.id,
+    metadata: {
+      ownerId: session.ownerId,
+      title: session.title,
+      assetCount: assets.length,
     },
   });
 }
@@ -150,7 +176,7 @@ export async function runGeneration(options: {
   attempt?: number;
 }) {
   const session = await getAccessibleSession(options.user, options.sessionId);
-  const provider = await getImageProvider();
+  const provider = await getImageProvider(options.user);
   const turn = await prisma.turn.create({
     data: {
       sessionId: session.id,
@@ -275,7 +301,7 @@ export async function runEdit(options: {
   attempt?: number;
 }) {
   const session = await getAccessibleSession(options.user, options.sessionId);
-  const provider = await getImageProvider();
+  const provider = await getImageProvider(options.user);
   const inputAssets = await prisma.asset.findMany({
     where: { id: { in: options.inputAssetIds }, sessionId: session.id },
   });

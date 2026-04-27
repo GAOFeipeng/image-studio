@@ -15,7 +15,7 @@ export async function POST(request: Request, context: Params) {
       user,
       sessionId,
       prompt: body.prompt,
-      params: await applyImageParamDefaults(body.params),
+      params: await applyImageParamDefaults(body.params, user),
       parentTurnId: body.parentTurnId,
     });
     return ok(result);
