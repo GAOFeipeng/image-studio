@@ -37,10 +37,15 @@ export function serializeAsset<T extends { id: string }>(asset: T) {
   return { ...asset, url: assetFileUrl(asset.id) };
 }
 
-export function serializeTurn<T extends { outputAssetIds: Prisma.JsonValue | null }>(turn: T) {
+export function serializeTurn<T extends { outputAssetIds: Prisma.JsonValue | null; inputAssetIds?: Prisma.JsonValue | null }>(
+  turn: T,
+) {
   return {
     ...turn,
     outputAssetIds: Array.isArray(turn.outputAssetIds) ? turn.outputAssetIds : [],
+    inputAssetIds: Array.isArray(turn.inputAssetIds)
+      ? turn.inputAssetIds.filter((id): id is string => typeof id === "string")
+      : [],
   };
 }
 
@@ -119,7 +124,7 @@ export async function listSessionTurns(user: SafeUser, sessionId: string) {
   await getAccessibleSession(user, sessionId);
 
   const turns = await prisma.turn.findMany({
-    where: { sessionId },
+    where: { sessionId, status: { not: TurnStatus.CANCELLED } },
     orderBy: { createdAt: "asc" },
   });
 

@@ -66,12 +66,24 @@ type Turn = {
   type: "GENERATION" | "EDIT";
   status: "QUEUED" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
   prompt: string;
+  params?: TurnParams | null;
+  inputAssetIds?: string[] | null;
+  maskAssetId?: string | null;
   providerModel: string;
   errorCode?: string | null;
   errorMessage?: string | null;
   latencyMs?: number | null;
   outputAssetIds: string[];
   createdAt: string;
+};
+
+type TurnParams = {
+  model?: string;
+  size?: string;
+  quality?: "auto" | "low" | "medium" | "high";
+  background?: "transparent" | "opaque" | "auto";
+  n?: number;
+  seed?: number;
 };
 
 type PendingTurn = {
@@ -604,25 +616,69 @@ export function AppShell() {
     }
   }
 
-  async function retryTurn(turnId: string) {
-    if (retryingTurnIdsRef.current.has(turnId)) return;
+  async function retryTurn(turn: Turn) {
+    const sessionId = selectedSessionId;
+    if (!sessionId || retryingTurnIdsRef.current.has(turn.id)) return;
+    if (providerSettings?.provider !== "openai-compatible" || !providerSettings.hasApiKey) {
+      setMessage("请先在个人设置里配置自己的 OpenAI-compatible Provider 和 API key。");
+      return;
+    }
 
-    retryingTurnIdsRef.current.add(turnId);
+    retryingTurnIdsRef.current.add(turn.id);
     setRetryingTurnIds(new Set(retryingTurnIdsRef.current));
     setBusy(true);
     setMessage(null);
+    setTurns((current) => current.filter((item) => item.id !== turn.id));
+
+    const params: TurnParams = {
+      model: turn.params?.model ?? model,
+      size: turn.params?.size ?? size,
+      quality: turn.params?.quality ?? quality,
+      n: turn.params?.n ?? count,
+    };
+    if (turn.params?.background) params.background = turn.params.background;
+    if (turn.params?.seed !== undefined) params.seed = turn.params.seed;
+
+    const inputAssetIds = (turn.inputAssetIds ?? []).slice(0, maxEditInputs);
+    const hasInputImages = turn.type === "EDIT" && inputAssetIds.length > 0;
+    const pending: PendingTurn = {
+      id: `pending-${crypto.randomUUID()}`,
+      sessionId,
+      type: hasInputImages ? "EDIT" : "GENERATION",
+      prompt: turn.prompt,
+      providerModel: params.model ?? model,
+      startedAt: Date.now(),
+    };
+
+    setPendingTurn(pending);
 
     try {
-      const data = await request<{ turn: Turn; assets: Asset[] }>(`/api/turns/${turnId}/retry`, {
+      await request<{ ok: true }>(`/api/turns/${turn.id}`, { method: "DELETE" });
+      const endpoint =
+        hasInputImages
+          ? `/api/sessions/${sessionId}/turns/edit`
+          : `/api/sessions/${sessionId}/turns/generation`;
+      const body =
+        hasInputImages
+          ? { prompt: turn.prompt, params, inputAssetIds, maskAssetId: turn.maskAssetId }
+          : { prompt: turn.prompt, params };
+      const data = await request<{ turn: Turn; assets: Asset[] }>(endpoint, {
         method: "POST",
+        body: JSON.stringify(body),
       });
-      setTurns((current) => [...current, data.turn]);
-      setAssets((current) => [...data.assets, ...current]);
+      if (selectedSessionIdRef.current === sessionId) {
+        setTurns((current) => [...current.filter((item) => item.id !== turn.id), data.turn]);
+        setAssets((current) => [...data.assets, ...current]);
+      }
+      await refreshSessions();
+      if (user?.role === "ADMIN") await refreshAdmin();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Retry failed");
+      setMessage(error instanceof Error ? error.message : "重新创作失败");
+      if (selectedSessionIdRef.current === sessionId) await refreshSessionData(sessionId);
     } finally {
-      retryingTurnIdsRef.current.delete(turnId);
+      retryingTurnIdsRef.current.delete(turn.id);
       setRetryingTurnIds(new Set(retryingTurnIdsRef.current));
+      setPendingTurn((current) => (current?.id === pending.id ? null : current));
       setBusy(false);
     }
   }
@@ -982,7 +1038,7 @@ function StudioView(props: {
   selectedAssetIds: string[];
   setSelectedAssetIds: React.Dispatch<React.SetStateAction<string[]>>;
   submitTurn: () => Promise<void>;
-  retryTurn: (id: string) => Promise<void>;
+  retryTurn: (turn: Turn) => Promise<void>;
   retryingTurnIds: Set<string>;
   continueEditing: (asset: Asset) => void;
   openUploadPicker: () => void;
@@ -1092,7 +1148,7 @@ function StudioView(props: {
                         {turn.status === "FAILED" ? (
                           <button
                             disabled={isRetrying || props.busy}
-                            onClick={() => props.retryTurn(turn.id)}
+                            onClick={() => props.retryTurn(turn)}
                             className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {isRetrying ? <Loader2 className="animate-spin" size={12} /> : null}
