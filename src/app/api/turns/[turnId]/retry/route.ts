@@ -1,4 +1,4 @@
-import { TurnType } from "@prisma/client";
+import { TurnStatus, TurnType } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { HttpError, handleError, ok } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
@@ -21,6 +21,18 @@ export async function POST(_request: Request, context: Params) {
 
     if (user.role !== "ADMIN" && turn.userId !== user.id) {
       throw new HttpError(403, "You cannot retry this turn", "forbidden");
+    }
+
+    const activeRetry = await prisma.turn.findFirst({
+      where: {
+        retryOfTurnId: turn.id,
+        status: { in: [TurnStatus.QUEUED, TurnStatus.PROCESSING] },
+      },
+      select: { id: true },
+    });
+
+    if (activeRetry) {
+      throw new HttpError(409, "This turn is already being retried", "retry_in_progress");
     }
 
     if (turn.type === TurnType.GENERATION) {

@@ -236,10 +236,12 @@ export function AppShell() {
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [uploadPreviews, setUploadPreviews] = useState<UploadPreview[]>([]);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
+  const [retryingTurnIds, setRetryingTurnIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
+  const retryingTurnIdsRef = useRef<Set<string>>(new Set());
   const uploadPreviewUrls = useRef<string[]>([]);
 
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
@@ -603,6 +605,10 @@ export function AppShell() {
   }
 
   async function retryTurn(turnId: string) {
+    if (retryingTurnIdsRef.current.has(turnId)) return;
+
+    retryingTurnIdsRef.current.add(turnId);
+    setRetryingTurnIds(new Set(retryingTurnIdsRef.current));
     setBusy(true);
     setMessage(null);
 
@@ -615,6 +621,8 @@ export function AppShell() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Retry failed");
     } finally {
+      retryingTurnIdsRef.current.delete(turnId);
+      setRetryingTurnIds(new Set(retryingTurnIdsRef.current));
       setBusy(false);
     }
   }
@@ -858,6 +866,7 @@ export function AppShell() {
             setSelectedAssetIds={setSelectedAssetIds}
             submitTurn={submitTurn}
             retryTurn={retryTurn}
+            retryingTurnIds={retryingTurnIds}
             continueEditing={continueEditing}
             openUploadPicker={openUploadPicker}
             uploadFiles={uploadFiles}
@@ -974,6 +983,7 @@ function StudioView(props: {
   setSelectedAssetIds: React.Dispatch<React.SetStateAction<string[]>>;
   submitTurn: () => Promise<void>;
   retryTurn: (id: string) => Promise<void>;
+  retryingTurnIds: Set<string>;
   continueEditing: (asset: Asset) => void;
   openUploadPicker: () => void;
   uploadFiles: (files: FileList | File[] | null) => Promise<void>;
@@ -1062,6 +1072,7 @@ function StudioView(props: {
           ) : (
             <div className="mx-auto max-w-5xl space-y-5">
               {props.turns.map((turn) => {
+                const isRetrying = props.retryingTurnIds.has(turn.id);
                 const outputAssets = turn.outputAssetIds
                   .map((id) => props.assetById.get(id))
                   .filter((asset): asset is Asset => Boolean(asset));
@@ -1080,10 +1091,12 @@ function StudioView(props: {
                         {turn.latencyMs ? `${Math.round(turn.latencyMs / 1000)}s` : null}
                         {turn.status === "FAILED" ? (
                           <button
+                            disabled={isRetrying || props.busy}
                             onClick={() => props.retryTurn(turn.id)}
-                            className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            重试
+                            {isRetrying ? <Loader2 className="animate-spin" size={12} /> : null}
+                            {isRetrying ? "重试中" : "重试"}
                           </button>
                         ) : null}
                       </div>
