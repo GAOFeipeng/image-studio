@@ -981,6 +981,7 @@ function StudioView(props: {
   busy: boolean;
 }) {
   const [dragActive, setDragActive] = useState(false);
+  const [openPicker, setOpenPicker] = useState<"size" | "count" | null>(null);
   const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const [timerNow, setTimerNow] = useState(() => Date.now());
   const messagesScrollRef = useRef<HTMLElement>(null);
@@ -1183,43 +1184,88 @@ function StudioView(props: {
                 >
                   <Upload size={17} />
                 </button>
-                <label
-                  className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                  title={`尺寸预设：${sizePillDetail}`}
-                >
-                  <span className="sr-only">尺寸预设</span>
-                  <select
-                    value={props.size}
-                    onChange={(event) => props.setSize(event.target.value)}
-                    className="h-full appearance-none bg-transparent pr-1 text-xs font-medium outline-none"
-                    aria-label="尺寸预设"
+                {openPicker ? (
+                  <button
+                    type="button"
+                    className="fixed inset-0 z-10 cursor-default"
+                    aria-label="关闭选择器"
+                    onClick={() => setOpenPicker(null)}
+                  />
+                ) : null}
+                <div className="relative z-20">
+                  <button
+                    type="button"
+                    onClick={() => setOpenPicker((current) => (current === "size" ? null : "size"))}
+                    className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                    title={`尺寸预设：${sizePillDetail}`}
+                    aria-expanded={openPicker === "size"}
+                    aria-haspopup="menu"
                   >
-                    {sizePresets.map((preset) => (
-                      <option key={preset.size} value={preset.size}>
-                        {preset.ratio}
-                      </option>
-                    ))}
-                    {!selectedSizePreset ? <option value={props.size}>{sizePillRatio}</option> : null}
-                  </select>
-                </label>
-                <label
-                  className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                  title="生成数量"
-                >
-                  <span className="sr-only">生成数量</span>
-                  <select
-                    value={props.count}
-                    onChange={(event) => props.setCount(clampImageCount(event.target.value))}
-                    className="h-full appearance-none bg-transparent pr-1 text-xs font-medium outline-none"
-                    aria-label="生成数量"
+                    {sizePillRatio}
+                  </button>
+                  {openPicker === "size" ? (
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950 p-1 shadow-2xl">
+                      {sizePresets.map((preset) => (
+                        <button
+                          key={preset.size}
+                          type="button"
+                          onClick={() => {
+                            props.setSize(preset.size);
+                            setOpenPicker(null);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm ${
+                            props.size === preset.size ? "bg-zinc-800 text-white" : "text-zinc-300 hover:bg-zinc-900"
+                          }`}
+                        >
+                          <span className="font-medium">{preset.ratio}</span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{preset.label}</span>
+                          <span className="text-[11px] text-zinc-500">{preset.size}</span>
+                        </button>
+                      ))}
+                      {!selectedSizePreset ? (
+                        <button
+                          type="button"
+                          onClick={() => setOpenPicker(null)}
+                          className="flex w-full items-center justify-between gap-3 rounded-md bg-zinc-800 px-3 py-2 text-left text-sm text-white"
+                        >
+                          <span className="font-medium">{sizePillRatio}</span>
+                          <span className="text-[11px] text-zinc-500">{props.size}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="relative z-20">
+                  <button
+                    type="button"
+                    onClick={() => setOpenPicker((current) => (current === "count" ? null : "count"))}
+                    className="h-9 rounded-md border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                    title="生成数量"
+                    aria-expanded={openPicker === "count"}
+                    aria-haspopup="menu"
                   >
-                    {[1, 2, 3, 4].map((item) => (
-                      <option key={item} value={item}>
-                        {item} 张
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    {props.count} 张
+                  </button>
+                  {openPicker === "count" ? (
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-24 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950 p-1 shadow-2xl">
+                      {[1, 2, 3, 4].map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => {
+                            props.setCount(item);
+                            setOpenPicker(null);
+                          }}
+                          className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+                            props.count === item ? "bg-zinc-800 text-white" : "text-zinc-300 hover:bg-zinc-900"
+                          }`}
+                        >
+                          {item} 张
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   disabled={props.busy || !providerReady || !props.prompt.trim()}
                   onClick={props.submitTurn}
@@ -1845,10 +1891,4 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function clampImageCount(value: string) {
-  const next = Number(value);
-  if (!Number.isFinite(next)) return 1;
-  return Math.min(4, Math.max(1, Math.trunc(next)));
 }
