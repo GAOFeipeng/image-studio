@@ -200,6 +200,7 @@ model UserProviderSetting {
   editPath       String?
   apiKey         String?
   defaultModel   String?
+  responsesModel String?
   defaultSize    String?
   defaultQuality String?
   createdAt      DateTime @default(now())

@@ -13,6 +13,7 @@ const providerSettingKeys = [
   "image.editPath",
   "image.apiKey",
   "image.defaultModel",
+  "image.responsesModel",
   "image.defaultSize",
   "image.defaultQuality",
 ] as const;
@@ -20,12 +21,13 @@ const providerSettingKeys = [
 type ProviderSettingKey = (typeof providerSettingKeys)[number];
 
 export type ImageProviderSettings = {
-  provider: "openai-compatible" | "mock";
+  provider: "openai-compatible" | "openai-responses" | "mock";
   apiBaseUrl: string;
   generationPath: string;
   editPath: string;
   apiKey?: string;
   defaultModel: string;
+  responsesModel: string;
   defaultSize: string;
   defaultQuality: "auto" | "low" | "medium" | "high";
   hasApiKey: boolean;
@@ -34,13 +36,14 @@ export type ImageProviderSettings = {
 };
 
 export const imageProviderSettingsSchema = z.object({
-  provider: z.enum(["openai-compatible", "mock"]).optional(),
+  provider: z.enum(["openai-compatible", "openai-responses", "mock"]).optional(),
   apiBaseUrl: z.string().trim().url().optional(),
   generationPath: z.string().trim().min(1).startsWith("/").optional(),
   editPath: z.string().trim().min(1).startsWith("/").optional(),
   apiKey: z.string().optional(),
   clearApiKey: z.boolean().optional(),
   defaultModel: z.string().trim().min(1).optional(),
+  responsesModel: z.string().trim().min(1).optional(),
   defaultSize: z.string().trim().min(1).optional(),
   defaultQuality: z.enum(["auto", "low", "medium", "high"]).optional(),
 });
@@ -53,6 +56,7 @@ type UserProviderSettingData = {
   editPath?: string;
   apiKey?: string | null;
   defaultModel?: string;
+  responsesModel?: string;
   defaultSize?: string;
   defaultQuality?: string;
 };
@@ -64,6 +68,7 @@ const keyByField: Record<Exclude<keyof ImageProviderSettingsInput, "clearApiKey"
   editPath: "image.editPath",
   apiKey: "image.apiKey",
   defaultModel: "image.defaultModel",
+  responsesModel: "image.responsesModel",
   defaultSize: "image.defaultSize",
   defaultQuality: "image.defaultQuality",
 };
@@ -93,6 +98,7 @@ async function getGlobalImageProviderSettings(): Promise<ImageProviderSettings> 
     editPath: values.get("image.editPath")?.value || env.IMAGE_EDIT_PATH,
     apiKey,
     defaultModel: values.get("image.defaultModel")?.value || env.IMAGE_DEFAULT_MODEL,
+    responsesModel: values.get("image.responsesModel")?.value || env.IMAGE_RESPONSES_MODEL,
     defaultSize: values.get("image.defaultSize")?.value || env.IMAGE_DEFAULT_SIZE,
     defaultQuality: parseQuality(values.get("image.defaultQuality")?.value ?? env.IMAGE_DEFAULT_QUALITY),
     hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
@@ -117,6 +123,7 @@ async function getUserImageProviderSettings(
     editPath: row?.editPath || globalSettings.editPath,
     apiKey,
     defaultModel: row?.defaultModel || globalSettings.defaultModel,
+    responsesModel: row?.responsesModel || globalSettings.responsesModel,
     defaultSize: row?.defaultSize || globalSettings.defaultSize,
     defaultQuality: parseQuality(row?.defaultQuality ?? globalSettings.defaultQuality),
     hasApiKey: Boolean(apiKey && apiKey !== "server-only-secret"),
@@ -147,7 +154,7 @@ export async function updateImageProviderSettings(input: ImageProviderSettingsIn
     updates.push(upsertSetting("image.editPath", assertProviderPath(data.editPath.trim(), "Edit path"), false));
   }
 
-  for (const field of ["defaultModel", "defaultSize", "defaultQuality"] as const) {
+  for (const field of ["defaultModel", "responsesModel", "defaultSize", "defaultQuality"] as const) {
     if (data[field] !== undefined) {
       updates.push(upsertSetting(keyByField[field], data[field].trim(), false));
     }
@@ -216,6 +223,7 @@ export async function getPublicImageProviderSettings(user?: SafeUser) {
     generationPath: settings.generationPath,
     editPath: settings.editPath,
     defaultModel: settings.defaultModel,
+    responsesModel: settings.responsesModel,
     defaultSize: settings.defaultSize,
     defaultQuality: settings.defaultQuality,
     hasApiKey: settings.hasApiKey,
@@ -271,6 +279,10 @@ function buildUserProviderSettingData(data: ImageProviderSettingsInput) {
     updateData.defaultModel = data.defaultModel.trim();
   }
 
+  if (data.responsesModel !== undefined) {
+    updateData.responsesModel = data.responsesModel.trim();
+  }
+
   if (data.defaultSize !== undefined) {
     updateData.defaultSize = data.defaultSize.trim();
   }
@@ -289,7 +301,11 @@ function buildUserProviderSettingData(data: ImageProviderSettingsInput) {
 }
 
 function parseProvider(value: string) {
-  return value === "mock" ? "mock" : "openai-compatible";
+  if (value === "mock" || value === "openai-responses") {
+    return value;
+  }
+
+  return "openai-compatible";
 }
 
 function parseQuality(value: string) {

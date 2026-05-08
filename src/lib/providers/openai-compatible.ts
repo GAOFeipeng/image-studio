@@ -1,4 +1,5 @@
 import { HttpError } from "@/lib/http";
+import { providerHttpError } from "@/lib/providers/errors";
 import {
   EditImageInput,
   GenerateImageInput,
@@ -101,13 +102,7 @@ export class OpenAICompatibleImageProvider implements ImageProvider {
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
       if (!response.ok) {
-        const requestId = response.headers.get("x-request-id") ?? response.headers.get("x-correlation-id");
-        const requestIdSuffix = requestId ? ` request_id=${requestId}` : "";
-        throw new HttpError(
-          502,
-          `Image provider request failed (${response.status} ${response.statusText})${requestIdSuffix}`,
-          "provider_error",
-        );
+        throw await providerHttpError(response);
       }
 
       return response;

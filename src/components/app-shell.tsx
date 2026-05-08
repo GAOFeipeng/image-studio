@@ -165,11 +165,12 @@ type AuditLog = {
 };
 
 type ProviderSettings = {
-  provider: "openai-compatible" | "mock";
+  provider: "openai-compatible" | "openai-responses" | "mock";
   apiBaseUrl: string;
   generationPath: string;
   editPath: string;
   defaultModel: string;
+  responsesModel: string;
   defaultSize: string;
   defaultQuality: "auto" | "low" | "medium" | "high";
   hasApiKey: boolean;
@@ -198,6 +199,10 @@ class ApiRequestError extends Error {
   ) {
     super(message);
   }
+}
+
+function isRealProviderReady(settings: ProviderSettings | null) {
+  return Boolean(settings && settings.provider !== "mock" && settings.hasApiKey);
 }
 
 const defaultModel = "gpt-image-2";
@@ -566,7 +571,7 @@ export function AppShell() {
     const sessionId = selectedSessionId;
     const promptText = prompt;
     if (!sessionId || !promptText.trim()) return;
-    if (providerSettings?.provider !== "openai-compatible" || !providerSettings.hasApiKey) {
+    if (!isRealProviderReady(providerSettings)) {
       setMessage("请先在个人设置里配置自己的 OpenAI-compatible Provider 和 API key。");
       return;
     }
@@ -619,7 +624,7 @@ export function AppShell() {
   async function retryTurn(turn: Turn) {
     const sessionId = selectedSessionId;
     if (!sessionId || retryingTurnIdsRef.current.has(turn.id)) return;
-    if (providerSettings?.provider !== "openai-compatible" || !providerSettings.hasApiKey) {
+    if (!isRealProviderReady(providerSettings)) {
       setMessage("请先在个人设置里配置自己的 OpenAI-compatible Provider 和 API key。");
       return;
     }
@@ -1053,7 +1058,7 @@ function StudioView(props: {
   const messagesScrollRef = useRef<HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
-  const providerReady = props.providerSettings?.provider === "openai-compatible" && props.providerSettings.hasApiKey;
+  const providerReady = isRealProviderReady(props.providerSettings);
   const providerWarning = !props.providerSettings
     ? "正在读取图像供应商配置。"
     : props.providerSettings.provider === "mock"
@@ -1607,6 +1612,7 @@ function SettingsView(props: {
               props.providerSettings.generationPath,
               props.providerSettings.editPath,
               props.providerSettings.defaultModel,
+              props.providerSettings.responsesModel,
               props.providerSettings.defaultSize,
               props.providerSettings.defaultQuality,
               props.providerSettings.apiKeyPreview,
@@ -1664,6 +1670,7 @@ function AdminView(props: {
             props.data.providerSettings.generationPath,
             props.data.providerSettings.editPath,
             props.data.providerSettings.defaultModel,
+            props.data.providerSettings.responsesModel,
             props.data.providerSettings.defaultSize,
             props.data.providerSettings.defaultQuality,
             props.data.providerSettings.apiKeyPreview,
@@ -1776,6 +1783,7 @@ function ProviderSettingsForm(props: {
     apiKey: "",
     clearApiKey: false,
     defaultModel: props.settings.defaultModel,
+    responsesModel: props.settings.responsesModel,
     defaultSize: props.settings.defaultSize,
     defaultQuality: props.settings.defaultQuality,
   });
@@ -1827,6 +1835,7 @@ function ProviderSettingsForm(props: {
             className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
           >
             <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="openai-responses">OpenAI Responses</option>
             <option value="mock">Mock provider</option>
           </select>
         </Field>
@@ -1859,6 +1868,14 @@ function ProviderSettingsForm(props: {
             value={settingsForm.defaultModel}
             onChange={(event) => setSettingsForm((current) => ({ ...current, defaultModel: event.target.value }))}
             className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+          />
+        </Field>
+        <Field label="Responses model">
+          <input
+            value={settingsForm.responsesModel}
+            onChange={(event) => setSettingsForm((current) => ({ ...current, responsesModel: event.target.value }))}
+            className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm outline-none"
+            placeholder="gpt-5"
           />
         </Field>
         <Field label="Default size">

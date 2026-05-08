@@ -92,6 +92,8 @@ For public HTTPS, put Caddy or Nginx in front of the `web` service. The Compose 
 
 After the first administrator logs in, open the admin area and set Provider Settings. For general OpenAI-compatible deployments, choose `OpenAI-compatible`, enter the provider Base URL, generation/edit paths, default model/size, and API key. Leave `IMAGE_PROVIDER="mock"` only for local UI testing.
 
+If the provider gateway runs on the same host outside Docker, use `http://host.docker.internal:<port>` as the Provider Base URL. Inside the `web` container, `127.0.0.1` points to the container itself, not the host.
+
 ## Environment Variables
 
 Important server-only variables:
@@ -107,6 +109,7 @@ Important server-only variables:
 - `IMAGE_EDIT_PATH`
 - `IMAGE_API_KEY`
 - `IMAGE_DEFAULT_MODEL`
+- `IMAGE_RESPONSES_MODEL`
 - `IMAGE_DEFAULT_SIZE`
 - `IMAGE_DEFAULT_QUALITY`
 - `IMAGE_REQUEST_TIMEOUT_MS`
