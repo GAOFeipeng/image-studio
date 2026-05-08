@@ -18,7 +18,7 @@ export function normalizeProviderBaseUrl(value: string) {
     throw new HttpError(400, "Provider base URL is invalid", "invalid_provider_base_url");
   }
 
-  assertSafeRemoteUrl(url, "Provider base URL");
+  assertSafeProviderUrl(url);
   url.username = "";
   url.password = "";
   url.hash = "";
@@ -59,6 +59,22 @@ function assertSafeRemoteUrl(url: URL, label: string) {
   if (isPrivateOrReservedIp(hostname)) {
     throw new HttpError(400, `${label} cannot target private or reserved IP addresses`, "unsafe_remote_url");
   }
+}
+
+function assertSafeProviderUrl(url: URL) {
+  const hostname = stripIpv6Brackets(url.hostname.toLowerCase());
+  if (isLoopbackHostname(hostname)) {
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new HttpError(400, "Provider base URL must use HTTP or HTTPS", "unsafe_remote_url");
+    }
+    return;
+  }
+
+  assertSafeRemoteUrl(url, "Provider base URL");
+}
+
+function isLoopbackHostname(hostname: string) {
+  return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function stripIpv6Brackets(hostname: string) {

@@ -11,11 +11,16 @@ describe("remote URL safety", () => {
   });
 
   it("rejects localhost and private addresses", () => {
-    expect(() => normalizeProviderBaseUrl("https://localhost")).toThrow(/localhost/);
+    expect(() => normalizeRemoteImageUrl("https://localhost/image.png")).toThrow(/localhost/);
     expect(() => normalizeRemoteImageUrl("https://10.0.0.1/image.png")).toThrow(/private/);
   });
 
   it("rejects non-HTTPS endpoints", () => {
     expect(() => normalizeProviderBaseUrl("http://api.example.com")).toThrow(/HTTPS/);
+  });
+
+  it("allows loopback HTTP provider URLs for same-host deployments", () => {
+    expect(normalizeProviderBaseUrl("http://127.0.0.1:8317/")).toBe("http://127.0.0.1:8317");
+    expect(normalizeProviderBaseUrl("http://localhost:8317/")).toBe("http://localhost:8317");
   });
 });
