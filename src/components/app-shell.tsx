@@ -242,6 +242,19 @@ const sizePresets: SizePreset[] = [
   { ratio: "2:3", label: "Tall", size: "1024x1536", useCase: "海报、人物、竖版插画" },
   { ratio: "3:2", label: "Wide", size: "1536x1024", useCase: "封面、产品场景、宽幅构图" },
 ];
+const fallbackProviderSettings: ProviderSettings = {
+  provider: "openai-compatible",
+  apiBaseUrl: "https://api.openai.com",
+  generationPath: "/v1/images/generations",
+  editPath: "/v1/images/edits",
+  defaultModel,
+  responsesModel: "gpt-5",
+  defaultSize: sizePresets[0].size,
+  defaultQuality: "auto",
+  hasApiKey: false,
+  apiKeyPreview: null,
+  source: "global",
+};
 const acceptedUploadTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const maxEditInputs = 4;
 
@@ -424,11 +437,16 @@ export function AppShell() {
   }
 
   async function refreshProviderDefaults() {
-    const data = await request<{ settings: ProviderSettings }>("/api/provider-settings");
-    setProviderSettings(data.settings);
-    setModel(data.settings.defaultModel);
-    setSize(data.settings.defaultSize);
-    setQuality(data.settings.defaultQuality);
+    try {
+      const data = await request<{ settings: ProviderSettings }>("/api/provider-settings");
+      setProviderSettings(data.settings);
+      setModel(data.settings.defaultModel);
+      setSize(data.settings.defaultSize);
+      setQuality(data.settings.defaultQuality);
+    } catch (error) {
+      setProviderSettings(fallbackProviderSettings);
+      setMessage(error instanceof Error ? error.message : "Could not load provider settings");
+    }
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
