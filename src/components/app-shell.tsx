@@ -13,14 +13,17 @@ import {
   Maximize2,
   Plus,
   RefreshCw,
+  Scissors,
   Search,
   Settings2,
+  Shirt,
   Sparkles,
+  Store,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -32,8 +35,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { workflowApps, type WorkflowApp, type WorkflowId, type WorkflowRunOptions } from "@/lib/workflows/catalog";
 
 type Role = "USER" | "ADMIN";
+type AppView = "studio" | "market" | "assets" | "settings" | "admin";
 type User = {
   id: string;
   email: string;
@@ -191,6 +196,16 @@ type UploadPreview = {
   error?: string;
 };
 
+type WorkflowRunResult = {
+  workflow: WorkflowApp;
+  inputAsset?: Asset;
+  inputAssets: Asset[];
+  turn: Turn;
+  assets: Asset[];
+};
+
+type WorkflowFilesBySlot = Record<string, File[]>;
+
 class ApiRequestError extends Error {
   constructor(
     message: string,
@@ -203,6 +218,11 @@ class ApiRequestError extends Error {
 
 function isRealProviderReady(settings: ProviderSettings | null) {
   return Boolean(settings && settings.provider !== "mock" && settings.hasApiKey);
+}
+
+function mergeAssets(incoming: Asset[], current: Asset[]) {
+  const incomingIds = new Set(incoming.map((asset) => asset.id));
+  return [...incoming, ...current.filter((asset) => !incomingIds.has(asset.id))];
 }
 
 const defaultModel = "gpt-image-2";
@@ -236,7 +256,7 @@ export function AppShell() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [view, setView] = useState<"studio" | "assets" | "settings" | "admin">("studio");
+  const [view, setView] = useState<AppView>("studio");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(defaultModel);
   const [size, setSize] = useState(sizePresets[0].size);
@@ -621,6 +641,73 @@ export function AppShell() {
     }
   }
 
+  async function runWorkflow(
+    workflowId: WorkflowId,
+    filesBySlot: WorkflowFilesBySlot,
+    notes: string,
+    options: WorkflowRunOptions = {},
+  ) {
+    const sessionId = selectedSessionId;
+    const workflow = workflowApps.find((item) => item.id === workflowId);
+    if (!sessionId || !workflow) return;
+    if (!isRealProviderReady(providerSettings)) {
+      setMessage("请先在个人设置里配置 OpenAI-compatible Provider 和 API key。");
+      return;
+    }
+
+    const pending: PendingTurn = {
+      id: `pending-${crypto.randomUUID()}`,
+      sessionId,
+      type: "EDIT",
+      prompt: workflow.name,
+      providerModel: model,
+      startedAt: Date.now(),
+    };
+
+    const form = new FormData();
+    for (const slot of workflow.inputSlots) {
+      for (const file of filesBySlot[slot.id] ?? []) {
+        form.append(`files.${slot.id}`, file);
+      }
+    }
+    if (notes.trim()) {
+      form.set("notes", notes.trim());
+    }
+    for (const [key, value] of Object.entries(options)) {
+      if (value) {
+        form.set(`options.${key}`, value);
+      }
+    }
+
+    setPendingTurn(pending);
+    setBusy(true);
+    setMessage(null);
+
+    try {
+      const data = await request<WorkflowRunResult>(`/api/sessions/${sessionId}/workflows/${workflowId}`, {
+        method: "POST",
+        body: form,
+      });
+
+      if (selectedSessionIdRef.current === sessionId) {
+        setTurns((current) => [...current, data.turn]);
+        setAssets((current) => mergeAssets([...data.assets, ...data.inputAssets], current));
+        setSelectedAssetIds(data.inputAssets.map((asset) => asset.id).slice(0, maxEditInputs));
+      }
+
+      setView("studio");
+      await refreshSessions();
+      if (user?.role === "ADMIN") await refreshAdmin();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Workflow failed");
+      if (selectedSessionIdRef.current === sessionId) await refreshSessionData(sessionId);
+      throw error;
+    } finally {
+      setPendingTurn((current) => (current?.id === pending.id ? null : current));
+      setBusy(false);
+    }
+  }
+
   async function retryTurn(turn: Turn) {
     const sessionId = selectedSessionId;
     if (!sessionId || retryingTurnIdsRef.current.has(turn.id)) return;
@@ -792,6 +879,7 @@ export function AppShell() {
 
         <nav className="space-y-1 px-3 py-2">
           <SidebarButton active={view === "studio"} icon={<Edit3 size={19} />} label="工作台" onClick={() => setView("studio")} />
+          <SidebarButton active={view === "market"} icon={<Store size={19} />} label="应用市场" onClick={() => setView("market")} />
           <SidebarButton active={view === "assets"} icon={<Layers size={19} />} label="资产池" onClick={() => setView("assets")} />
           <SidebarButton active={view === "settings"} icon={<Settings2 size={19} />} label="个人设置" onClick={() => setView("settings")} />
           {user.role === "ADMIN" ? (
@@ -860,6 +948,8 @@ export function AppShell() {
             <div className="flex items-center gap-2 text-lg font-semibold md:text-2xl">
               {view === "studio"
                 ? selectedSession?.title ?? "工作台"
+                : view === "market"
+                  ? "应用市场"
                 : view === "assets"
                   ? "资产池"
                   : view === "settings"
@@ -869,6 +959,8 @@ export function AppShell() {
             <div className="mt-1 text-xs text-zinc-500">
               {view === "studio"
                 ? "提示词、输入图和资产复用"
+                : view === "market"
+                  ? "预设工作流，上传图片后直接生成结果"
                 : view === "assets"
                   ? "上传图和创作结果集中管理"
                   : view === "settings"
@@ -933,6 +1025,16 @@ export function AppShell() {
             uploadFiles={uploadFiles}
             providerSettings={providerSettings}
             busy={busy}
+          />
+        ) : null}
+
+        {view === "market" ? (
+          <MarketplaceView
+            workflows={workflowApps}
+            runWorkflow={runWorkflow}
+            providerSettings={providerSettings}
+            busy={busy}
+            openSettings={() => setView("settings")}
           />
         ) : null}
 
@@ -1025,6 +1127,409 @@ function SidebarButton(props: { active: boolean; icon: React.ReactNode; label: s
       {props.icon}
       {props.label}
     </button>
+  );
+}
+
+function ChoiceGroup<T extends string>(props: {
+  label: string;
+  choices: Array<{ id: T; label: string; description: string }>;
+  value: T;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <div className="mb-2 text-sm text-zinc-300">{props.label}</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {props.choices.map((choice) => {
+          const active = choice.id === props.value;
+          return (
+            <button
+              key={choice.id}
+              type="button"
+              disabled={props.disabled}
+              onClick={() => props.onChange(choice.id)}
+              className={`min-h-[64px] rounded-md border px-3 py-2 text-left transition disabled:opacity-50 ${
+                active
+                  ? "border-white bg-zinc-100 text-black"
+                  : "border-zinc-700 bg-zinc-950 text-zinc-200 hover:border-zinc-500"
+              }`}
+            >
+              <span className="block text-sm font-medium">{choice.label}</span>
+              <span className={`mt-1 block text-xs leading-5 ${active ? "text-zinc-700" : "text-zinc-500"}`}>
+                {choice.description}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function getWorkflowOptionValues(workflow: WorkflowApp | undefined, stored: WorkflowRunOptions = {}) {
+  const values: WorkflowRunOptions = {};
+  for (const group of workflow?.optionGroups ?? []) {
+    values[group.id] = stored[group.id] ?? group.defaultChoiceId ?? group.choices[0]?.id;
+  }
+  return values;
+}
+
+function MarketplaceView(props: {
+  workflows: WorkflowApp[];
+  runWorkflow: (
+    workflowId: WorkflowId,
+    filesBySlot: WorkflowFilesBySlot,
+    notes: string,
+    options?: WorkflowRunOptions,
+  ) => Promise<void>;
+  providerSettings: ProviderSettings | null;
+  busy: boolean;
+  openSettings: () => void;
+}) {
+  const firstWorkflowId = props.workflows[0]?.id ?? "outfit-grid";
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<WorkflowId>(firstWorkflowId);
+  const [filesBySlot, setFilesBySlot] = useState<WorkflowFilesBySlot>({});
+  const [previewUrlsBySlot, setPreviewUrlsBySlot] = useState<Record<string, string[]>>({});
+  const [activeSlotId, setActiveSlotId] = useState<string | null>(props.workflows[0]?.inputSlots[0]?.id ?? null);
+  const [optionValuesByWorkflow, setOptionValuesByWorkflow] = useState<Record<string, WorkflowRunOptions>>({});
+  const [notes, setNotes] = useState("");
+  const [dragActiveSlotId, setDragActiveSlotId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlsBySlotRef = useRef<Record<string, string[]>>({});
+  const providerReady = isRealProviderReady(props.providerSettings);
+  const selectedWorkflow = props.workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? props.workflows[0];
+  const selectedOptionValues = getWorkflowOptionValues(
+    selectedWorkflow,
+    optionValuesByWorkflow[selectedWorkflow?.id ?? ""] ?? {},
+  );
+  const activeSlot = selectedWorkflow?.inputSlots.find((slot) => slot.id === activeSlotId) ?? selectedWorkflow?.inputSlots[0];
+  const hasRequiredFiles = Boolean(
+    selectedWorkflow?.inputSlots.every((slot) => {
+      const count = filesBySlot[slot.id]?.length ?? 0;
+      return count >= slot.minFiles && count <= slot.maxFiles;
+    }),
+  );
+
+  useEffect(() => {
+    previewUrlsBySlotRef.current = previewUrlsBySlot;
+  }, [previewUrlsBySlot]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsBySlotRef.current).flat().forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  function workflowIcon(workflowId: WorkflowId) {
+    if (workflowId === "outfit-grid") return <Shirt size={20} />;
+    if (workflowId === "hairstyle-grid") return <Scissors size={20} />;
+    return <ImageIcon size={20} />;
+  }
+
+  const chooseFiles = useCallback((slotId: string, incomingFiles: File[]) => {
+    const slot = selectedWorkflow?.inputSlots.find((item) => item.id === slotId);
+    if (!slot || incomingFiles.length === 0) return;
+
+    const imageFiles = incomingFiles.filter((file) => acceptedUploadTypes.has(file.type));
+    if (imageFiles.length !== incomingFiles.length) {
+      setLocalError("仅支持 PNG、JPEG 和 WebP 图片。");
+      return;
+    }
+
+    setFilesBySlot((current) => {
+      const existing = current[slotId] ?? [];
+      const next = [...existing, ...imageFiles].slice(-slot.maxFiles);
+      return { ...current, [slotId]: next };
+    });
+    setPreviewUrlsBySlot((current) => {
+      const existing = current[slotId] ?? [];
+      const urlsToDrop = Math.max(0, existing.length + imageFiles.length - slot.maxFiles);
+      existing.slice(0, urlsToDrop).forEach((url) => URL.revokeObjectURL(url));
+      const kept = existing.slice(urlsToDrop);
+      const next = [...kept, ...imageFiles.map((file) => URL.createObjectURL(file))];
+      return { ...current, [slotId]: next };
+    });
+    setActiveSlotId(slotId);
+    setLocalError(null);
+  }, [selectedWorkflow]);
+
+  function getPastedImage(event: ClipboardEvent) {
+    const file = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith("image/"));
+    if (file) return file;
+
+    const item = Array.from(event.clipboardData?.items ?? []).find(
+      (clipboardItem) => clipboardItem.kind === "file" && clipboardItem.type.startsWith("image/"),
+    );
+    return item?.getAsFile() ?? null;
+  }
+
+  useEffect(() => {
+    function pasteImage(event: ClipboardEvent) {
+      const file = getPastedImage(event);
+      if (!file) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      const targetSlot =
+        activeSlot ??
+        selectedWorkflow?.inputSlots.find((slot) => (filesBySlot[slot.id]?.length ?? 0) < slot.maxFiles) ??
+        selectedWorkflow?.inputSlots[0];
+      if (targetSlot) {
+        chooseFiles(targetSlot.id, [file]);
+      }
+    }
+
+    window.addEventListener("paste", pasteImage, { capture: true });
+    return () => window.removeEventListener("paste", pasteImage, { capture: true });
+  }, [activeSlot, chooseFiles, filesBySlot, selectedWorkflow]);
+
+  function clearSlot(slotId: string) {
+    previewUrlsBySlot[slotId]?.forEach((url) => URL.revokeObjectURL(url));
+    setFilesBySlot((current) => ({ ...current, [slotId]: [] }));
+    setPreviewUrlsBySlot((current) => ({ ...current, [slotId]: [] }));
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function submitWorkflow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedWorkflow || !hasRequiredFiles) return;
+
+    try {
+      await props.runWorkflow(selectedWorkflow.id, filesBySlot, notes, selectedOptionValues);
+      setNotes("");
+      for (const slot of selectedWorkflow.inputSlots) {
+        clearSlot(slot.id);
+      }
+    } catch {
+      // The caller already surfaces the provider or workflow error globally.
+    }
+  }
+
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
+      <div className="mx-auto grid max-w-6xl gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            {props.workflows.map((workflow) => {
+              const active = workflow.id === selectedWorkflowId;
+              return (
+                <button
+                  key={workflow.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedWorkflowId(workflow.id);
+                    setActiveSlotId(workflow.inputSlots[0]?.id ?? null);
+                    setLocalError(null);
+                  }}
+                  className={`rounded-lg border p-4 text-left transition ${
+                    active
+                      ? "border-white bg-zinc-100 text-black"
+                      : "border-zinc-800 bg-[#181818] text-zinc-100 hover:border-zinc-600"
+                  }`}
+                >
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <div
+                      className={`grid h-10 w-10 place-items-center rounded-md ${
+                        active ? "bg-black text-white" : "bg-zinc-900 text-zinc-200"
+                      }`}
+                    >
+                      {workflowIcon(workflow.id)}
+                    </div>
+                    <span className={`rounded-md px-2 py-1 text-xs ${active ? "bg-black/10" : "bg-zinc-900 text-zinc-400"}`}>
+                      {workflow.category}
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-semibold">{workflow.name}</h2>
+                  <p className={`mt-2 text-sm leading-6 ${active ? "text-zinc-700" : "text-zinc-400"}`}>
+                    {workflow.summary}
+                  </p>
+                  <div className={`mt-4 text-xs ${active ? "text-zinc-600" : "text-zinc-500"}`}>{workflow.outputLabel}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-[#181818] p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm text-zinc-300">
+              <Sparkles size={16} />
+              <span>工作流会在当前会话里生成一条编辑任务。</span>
+            </div>
+            <div className="grid gap-3 text-sm text-zinc-400 md:grid-cols-3">
+              <div className="rounded-md bg-zinc-950 px-3 py-2">输入：{selectedWorkflow?.inputLabel ?? "图片"}</div>
+              <div className="rounded-md bg-zinc-950 px-3 py-2">输出：{selectedWorkflow?.outputLabel ?? "1 张图"}</div>
+              <div className="rounded-md bg-zinc-950 px-3 py-2">模式：图像编辑</div>
+            </div>
+          </div>
+        </div>
+
+        {selectedWorkflow ? (
+          <form onSubmit={submitWorkflow} className="space-y-4 rounded-lg border border-zinc-800 bg-[#181818] p-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-md bg-zinc-900 text-zinc-100">
+                  {workflowIcon(selectedWorkflow.id)}
+                </div>
+                <div>
+                  <h2 className="font-semibold text-white">{selectedWorkflow.name}</h2>
+                  <p className="mt-1 text-xs text-zinc-500">{selectedWorkflow.inputLabel}</p>
+                </div>
+              </div>
+            </div>
+
+            {!providerReady ? (
+              <div className="rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-100">
+                需要先配置个人 API key。
+                <button type="button" onClick={props.openSettings} className="ml-2 underline underline-offset-2">
+                  去设置
+                </button>
+              </div>
+            ) : null}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple={(activeSlot?.maxFiles ?? 1) > 1}
+              className="hidden"
+              onChange={(event) => {
+                if (activeSlot) {
+                  chooseFiles(activeSlot.id, Array.from(event.target.files ?? []));
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+
+            <div className="space-y-3">
+              {selectedWorkflow.optionGroups?.length ? (
+                <div className="space-y-4">
+                  {selectedWorkflow.optionGroups.map((group) => (
+                    <ChoiceGroup
+                      key={group.id}
+                      label={group.label}
+                      choices={group.choices}
+                      value={selectedOptionValues[group.id] ?? group.choices[0]?.id ?? ""}
+                      onChange={(value) => {
+                        setOptionValuesByWorkflow((current) => ({
+                          ...current,
+                          [selectedWorkflow.id]: {
+                            ...current[selectedWorkflow.id],
+                            [group.id]: value,
+                          },
+                        }));
+                      }}
+                      disabled={props.busy}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              {selectedWorkflow.inputSlots.map((slot) => {
+                const slotFiles = filesBySlot[slot.id] ?? [];
+                const slotUrls = previewUrlsBySlot[slot.id] ?? [];
+                const active = activeSlotId === slot.id;
+                const complete = slotFiles.length >= slot.minFiles;
+
+                return (
+                  <section key={slot.id} className="space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-zinc-200">{slot.label}</div>
+                        <div className="mt-1 text-xs text-zinc-500">{slot.description}</div>
+                      </div>
+                      <span className={`rounded-md px-2 py-1 text-xs ${complete ? "bg-emerald-950 text-emerald-300" : "bg-zinc-900 text-zinc-500"}`}>
+                        {slotFiles.length}/{slot.maxFiles}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSlotId(slot.id);
+                        fileInputRef.current?.click();
+                      }}
+                      onDragEnter={(event) => {
+                        event.preventDefault();
+                        setDragActiveSlotId(slot.id);
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragActiveSlotId(slot.id);
+                      }}
+                      onDragLeave={() => setDragActiveSlotId(null)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDragActiveSlotId(null);
+                        chooseFiles(slot.id, Array.from(event.dataTransfer.files ?? []));
+                      }}
+                      className={`block w-full overflow-hidden rounded-lg border text-left ${
+                        dragActiveSlotId === slot.id || active ? "border-sky-400 ring-2 ring-sky-500/20" : "border-zinc-700"
+                      }`}
+                    >
+                      {slotUrls.length ? (
+                        <span className={`grid gap-1 bg-zinc-950 p-1 ${slotUrls.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                          {slotUrls.map((url, index) => (
+                            <span key={url} className="relative block aspect-[4/3] overflow-hidden rounded-md bg-black/30">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={url} alt="" className="h-full w-full object-cover" />
+                              <span className="absolute bottom-1 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/70 px-1.5 py-0.5 text-[11px] text-white">
+                                {slotFiles[index]?.name}
+                              </span>
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="grid aspect-[4/3] place-items-center bg-zinc-950 px-5 text-center">
+                          <span>
+                            <Upload className="mx-auto mb-3 text-zinc-400" size={26} />
+                            <span className="block text-sm font-medium text-zinc-200">上传或粘贴图片</span>
+                            <span className="mt-1 block text-xs text-zinc-500">点击此槽后 Ctrl+V，或拖拽文件</span>
+                          </span>
+                        </span>
+                      )}
+                    </button>
+                    {slotFiles.length ? (
+                      <button
+                        type="button"
+                        onClick={() => clearSlot(slot.id)}
+                        disabled={props.busy}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                      >
+                        <X size={13} />
+                        清空{slot.label}
+                      </button>
+                    ) : null}
+                  </section>
+                );
+              })}
+            </div>
+
+            {localError ? <p className="text-sm text-red-300">{localError}</p> : null}
+
+            <label className="block">
+              <span className="mb-2 block text-sm text-zinc-300">偏好</span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder={selectedWorkflow.notesPlaceholder}
+                className="min-h-24 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-zinc-400"
+              />
+            </label>
+
+            <div className="flex gap-2">
+              <button
+                disabled={props.busy || !providerReady || !hasRequiredFiles}
+                className="flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-white px-4 text-sm font-medium text-black disabled:opacity-50"
+              >
+                {props.busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                {selectedWorkflow.runLabel}
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
