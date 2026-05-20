@@ -89,13 +89,13 @@ export class OpenAIResponsesImageProvider implements ImageProvider {
         Authorization: `Bearer ${this.apiKey()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: responsesModel(options.params.model, this.config.responsesModel),
-        input: options.input,
-        tools: [imageGenerationTool(options.params, options.action, options.mask)],
-        tool_choice: { type: "image_generation" },
-        stream: true,
-      }),
+      body: JSON.stringify(
+        openAIResponsesImageRequestBody({
+          input: options.input,
+          params: options.params,
+          responsesModel: this.config.responsesModel,
+        }),
+      ),
     });
 
     return parseOpenAIResponsesImageResult(await response.text(), response.headers.get("content-type"), {
@@ -159,16 +159,27 @@ export function parseOpenAIResponsesImageResult(
   };
 }
 
-function imageGenerationTool(params: ImageParams, action: "generate" | "edit", mask?: EditableImage) {
+export function openAIResponsesImageRequestBody(options: {
+  input: unknown;
+  params: ImageParams;
+  responsesModel?: string;
+}) {
   return {
+    model: responsesModel(options.params.model, options.responsesModel),
+    input: options.input,
+    tools: [imageGenerationTool(options.params)],
+    tool_choice: { type: "image_generation" },
+    stream: true,
+  };
+}
+
+function imageGenerationTool(params: ImageParams) {
+  return stripUndefined({
     type: "image_generation",
-    action,
-    model: /^gpt-image-/i.test(params.model) ? params.model : undefined,
     size: params.size,
     quality: params.quality,
     background: params.background,
-    input_image_mask: mask ? { image_url: dataUrl(mask.buffer, mask.mimeType) } : undefined,
-  };
+  });
 }
 
 export function responsesModel(imageModel: string, configuredResponsesModel?: string) {
@@ -249,4 +260,8 @@ function parseJson(value: string): ResponsesResponse {
 
 function dataUrl(buffer: Buffer, mimeType: string) {
   return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function stripUndefined<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined));
 }

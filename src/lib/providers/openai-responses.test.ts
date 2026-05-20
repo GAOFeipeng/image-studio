@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenAIResponsesImageResult, responsesModel } from "@/lib/providers/openai-responses";
+import {
+  openAIResponsesImageRequestBody,
+  parseOpenAIResponsesImageResult,
+  responsesModel,
+} from "@/lib/providers/openai-responses";
 
 describe("OpenAI Responses image provider", () => {
   it("parses image_generation_call results from JSON responses", () => {
@@ -39,5 +43,32 @@ describe("OpenAI Responses image provider", () => {
   it("uses a configured outer Responses model when one is provided", () => {
     expect(responsesModel("gpt-image-2", "gpt-4.1")).toBe("gpt-4.1");
     expect(responsesModel("gpt-image-2")).toBe("gpt-5");
+  });
+
+  it("forces the image generation tool in Responses requests", () => {
+    expect(
+      openAIResponsesImageRequestBody({
+        input: "draw a clean product render",
+        params: {
+          model: "gpt-image-2",
+          size: "1024x1024",
+          quality: "auto",
+        },
+      }),
+    ).toEqual({
+      model: "gpt-5",
+      input: "draw a clean product render",
+      tools: [
+        {
+          type: "image_generation",
+          size: "1024x1024",
+          quality: "auto",
+        },
+      ],
+      tool_choice: {
+        type: "image_generation",
+      },
+      stream: true,
+    });
   });
 });
